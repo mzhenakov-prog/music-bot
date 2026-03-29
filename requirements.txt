@@ -1,2 +1,3 @@
 pyTelegramBotAPI
-soundcloud-lib
+yt-dlp
+
