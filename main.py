@@ -6,7 +6,6 @@ import requests
 TG_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 bot = telebot.TeleBot(TG_TOKEN)
 
-# Временное хранилище результатов
 user_results = {}
 
 def main_menu():
@@ -17,19 +16,24 @@ def main_menu():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "🇷🇺 **Топ-чарты и поиск музыки готовы!**", 
-                     reply_markup=main_menu(), parse_mode='Markdown')
+    about_text = (
+        "👋 **Привет! Я твой музыкальный помощник.**\n\n"
+        "📥 Ищу лучшие треки из топ-чартов СНГ.\n"
+        "🔥 **В разделах Популярное и Новинки только свежие хиты!**\n\n"
+        "Просто выбери категорию или напиши название песни."
+    )
+    bot.send_message(message.chat.id, about_text, reply_markup=main_menu(), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text in ["🚀 Популярное", "✨ Новинки", "🔍 Поиск музыки"])
 def menu_logic(message):
     if message.text == "🔍 Поиск музыки":
-        bot.send_message(message.chat.id, "⌨️ Напиши название артиста или песни (например: *Три дня дождя*):", parse_mode='Markdown')
+        bot.send_message(message.chat.id, "⌨️ Напиши название артиста или песни:")
     elif message.text == "🚀 Популярное":
-        # Запрос на самые горячие хиты РФ (рэп и поп чарты)
-        search_music(message, "Top Russian Hits 2026")
+        # Используем ключевые слова для поиска аналога чарта ВК
+        search_music(message, "Top Hits Russia VK")
     elif message.text == "✨ Новинки":
-        # Запрос на свежие релизы
-        search_music(message, "Новинки музыки Россия 2026")
+        # Поиск самых свежих релизов
+        search_music(message, "Новинки музыки 2026")
 
 @bot.message_handler(content_types=['text'])
 def text_handler(message):
@@ -38,10 +42,10 @@ def text_handler(message):
 
 def search_music(message, query):
     try:
-        # Увеличили лимит до 10 для выбора
+        # Поиск через стабильный Deezer
         response = requests.get(f"https://api.deezer.com/search?q={query}&limit=10").json()
         if not response.get('data'):
-            bot.send_message(message.chat.id, "❌ Ничего не найдено по этому запросу.")
+            bot.send_message(message.chat.id, "❌ Ничего не найдено.")
             return
 
         tracks = response['data']
@@ -49,41 +53,38 @@ def search_music(message, query):
         
         markup = types.InlineKeyboardMarkup()
         for i, track in enumerate(tracks):
-            # Текст на кнопке: Артист - Трек
+            # Кнопка как на скриншоте: Артист — Название
             btn_text = f"{track['artist']['name']} — {track['title']}"
             markup.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"tr_{i}"))
         
-        bot.send_message(message.chat.id, f"🎵 Найдено по запросу: *{query}*", 
+        bot.send_message(message.chat.id, f"🎶 Результаты по запросу: *{query}*", 
                          reply_markup=markup, parse_mode='Markdown')
     except Exception:
-        bot.send_message(message.chat.id, "⚠️ Ошибка связи. Попробуй еще раз.")
+        bot.send_message(message.chat.id, "⚠️ Ошибка. Попробуй еще раз.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('tr_'))
 def send_track(call):
     idx = int(call.data.split('_')[1])
     if call.message.chat.id not in user_results:
-        bot.answer_callback_query(call.id, "Поиск устарел, введи название снова.")
+        bot.answer_callback_query(call.id, "Поищи заново.")
         return
 
     track = user_results[call.message.chat.id][idx]
     
-    # Данные для плеера
-    artist = track['artist']['name']
-    title = track['title']
-    url = track['preview']
+    # Исправляем отображение (убираем рандомные буквы из плеера)
+    artist_name = track['artist']['name']
+    track_title = track['title']
+    audio_url = track['preview']
 
-    bot.answer_callback_query(call.id, f"📥 Загружаю: {title}")
+    bot.answer_callback_query(call.id, f"🎵 {track_title}")
     
-    # Отправляем аудио с ЧЕТКИМИ названиями артиста и песни
     bot.send_audio(
         call.message.chat.id, 
-        url, 
-        title=title, 
-        performer=artist,
-        caption=f"🎧 **{artist} — {title}**",
-        parse_mode='Markdown'
+        audio_url, 
+        title=track_title, 
+        performer=artist_name,
+        caption=f"✅ {artist_name} — {track_title}"
     )
 
 if __name__ == '__main__':
     bot.polling(none_stop=True)
-
