@@ -6,6 +6,9 @@ import requests
 TG_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 bot = telebot.TeleBot(TG_TOKEN)
 
+# Временное хранилище для найденных треков
+user_results = {}
+
 def main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(types.KeyboardButton("🚀 Популярное"), types.KeyboardButton("✨ Новинки"))
@@ -14,52 +17,65 @@ def main_menu():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "🎵 **Музыкальный поиск Deezer готов!**\n\nПросто напиши название песни.", 
+    bot.send_message(message.chat.id, "🎵 **Музыкальный поиск готов!**\nНапиши название песни или выбери в меню.", 
                      reply_markup=main_menu(), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text in ["🚀 Популярное", "✨ Новинки", "🔍 Поиск музыки"])
-def handle_menu(message):
+def menu_logic(message):
     if message.text == "🔍 Поиск музыки":
         bot.send_message(message.chat.id, "⌨️ Напиши название артиста или песни:")
     else:
-        query = "chart" if "Популярное" in message.text else "new hits"
-        search_deezer(message, query)
+        # Для категорий используем понятные запросы
+        q = "russian hits" if "Популярное" in message.text else "latest releases"
+        search_music(message, q)
 
 @bot.message_handler(content_types=['text'])
-def handle_text(message):
+def text_handler(message):
     if message.text not in ["🚀 Популярное", "✨ Новинки", "🔍 Поиск музыки"]:
-        search_deezer(message, message.text)
+        search_music(message, message.text)
 
-def search_deezer(message, query):
-    wait = bot.send_message(message.chat.id, "🔎 *Ищу в базе Deezer...*", parse_mode='Markdown')
+def search_music(message, query):
     try:
-        # Прямой запрос к API Deezer (бесплатно и без ключей)
-        response = requests.get(f"https://api.deezer.com/search?q={query}&limit=5").json()
+        # Ищем музыку в Deezer
+        response = requests.get(f"https://api.deezer.com/search?q={query}&limit=10").json()
         
         if not response.get('data'):
-            bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, wait.message_id)
+            bot.send_message(message.chat.id, "❌ Ничего не найдено.")
             return
 
-        bot.delete_message(message.chat.id, wait.message_id)
+        tracks = response['data']
+        user_results[message.chat.id] = tracks # Сохраняем, чтобы потом скачать по кнопке
+        
+        markup = types.InlineKeyboardMarkup()
+        # Создаем кнопки как на твоем скриншоте
+        for i, track in enumerate(tracks):
+            btn_text = f"{track['artist']['name']} — {track['title']}"
+            markup.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"track_{i}"))
+        
+        bot.send_message(message.chat.id, f"🎶 Результаты по запросу: *{query}*", 
+                         reply_markup=markup, parse_mode='Markdown')
 
-        for track in response['data']:
-            title = track['title']
-            artist = track['artist']['name']
-            preview = track['preview'] # Ссылка на 30 сек превью
-            link = track['link'] # Ссылка на полный трек
-            cover = track['album']['cover_medium']
-
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🔗 Полная версия", url=link))
-            
-            caption = f"🎶 **{artist} — {title}**"
-            
-            # Отправляем карточку с обложкой и аудио-превью
-            bot.send_photo(message.chat.id, cover, caption=caption, reply_markup=markup, parse_mode='Markdown')
-            bot.send_audio(message.chat.id, preview, title=title, performer=artist)
-
-    except Exception as e:
+    except Exception:
         bot.send_message(message.chat.id, "⚠️ Ошибка поиска. Попробуй еще раз.")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('track_'))
+def send_track(call):
+    index = int(call.data.split('_')[1])
+    user_id = call.message.chat.id
+    
+    if user_id not in user_results:
+        bot.answer_callback_query(call.id, "Результаты устарели, поищи еще раз.")
+        return
+
+    track_data = user_results[user_id][index]
+    artist = track_data['artist']['name']
+    title = track_data['title']
+    preview_url = track_data['preview']
+
+    bot.answer_callback_query(call.id, "🚀 Отправляю...")
+    
+    # Отправляем аудио с правильным названием артиста и песни
+    bot.send_audio(user_id, preview_url, title=title, performer=artist)
 
 if __name__ == '__main__':
     bot.polling(none_stop=True)
