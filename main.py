@@ -1,10 +1,19 @@
 import telebot
 from telebot import types
-import requests
+import yt_dlp
 
 # Твой токен
 TG_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 bot = telebot.TeleBot(TG_TOKEN)
+
+# Настройки для поиска именно полных аудио-версий (Official Audio)
+YDL_OPTIONS = {
+    'format': 'bestaudio/best',
+    'noplaylist': True,
+    'quiet': True,
+    'default_search': 'ytsearch10',
+    'geo_bypass': True,
+}
 
 user_results = {}
 
@@ -16,74 +25,77 @@ def main_menu():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    about_text = (
-        "👋 **Привет! Я твой музыкальный помощник.**\n\n"
-        "📥 Ищу лучшие треки из топ-чартов СНГ.\n"
-        "🔥 **В разделах Популярное и Новинки только свежие хиты!**\n\n"
-        "Просто выбери категорию или напиши название песни."
+    about = (
+        "👋 **Музыкальный бот 2026**\n\n"
+        "🔥 Здесь только полные треки из чартов ВК и YouTube.\n"
+        "Обновление чартов происходит ежедневно!"
     )
-    bot.send_message(message.chat.id, about_text, reply_markup=main_menu(), parse_mode='Markdown')
+    bot.send_message(message.chat.id, about, reply_markup=main_menu(), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text in ["🚀 Популярное", "✨ Новинки", "🔍 Поиск музыки"])
 def menu_logic(message):
     if message.text == "🔍 Поиск музыки":
-        bot.send_message(message.chat.id, "⌨️ Напиши название артиста или песни:")
+        bot.send_message(message.chat.id, "⌨️ Напиши название:")
     elif message.text == "🚀 Популярное":
-        # Используем ключевые слова для поиска аналога чарта ВК
-        search_music(message, "Top Hits Russia VK")
+        # Ищем именно в российском чарте YouTube/ВК
+        search_youtube(message, "Top 100 Russia 2026 Official Audio")
     elif message.text == "✨ Новинки":
-        # Поиск самых свежих релизов
-        search_music(message, "Новинки музыки 2026")
+        # Ищем самые свежие релизы этой недели
+        search_youtube(message, "Новинки музыки Россия СНГ 2026")
 
 @bot.message_handler(content_types=['text'])
 def text_handler(message):
     if message.text not in ["🚀 Популярное", "✨ Новинки", "🔍 Поиск музыки"]:
-        search_music(message, message.text)
+        search_youtube(message, message.text)
 
-def search_music(message, query):
+def search_youtube(message, query):
+    wait = bot.send_message(message.chat.id, "🔎 *Синхронизация с чартами...*", parse_mode='Markdown')
     try:
-        # Поиск через стабильный Deezer
-        response = requests.get(f"https://api.deezer.com/search?q={query}&limit=10").json()
-        if not response.get('data'):
-            bot.send_message(message.chat.id, "❌ Ничего не найдено.")
+        with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+            # Ищем 10 вариантов, чтобы отсечь лишнее
+            info = ydl.extract_info(f"ytsearch10:{query}", download=False)
+            tracks = info['entries']
+            
+        if not tracks:
+            bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, wait.message_id)
             return
 
-        tracks = response['data']
         user_results[message.chat.id] = tracks
-        
         markup = types.InlineKeyboardMarkup()
-        for i, track in enumerate(tracks):
-            # Кнопка как на скриншоте: Артист — Название
-            btn_text = f"{track['artist']['name']} — {track['title']}"
-            markup.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"tr_{i}"))
         
-        bot.send_message(message.chat.id, f"🎶 Результаты по запросу: *{query}*", 
+        for i, track in enumerate(tracks):
+            title = track.get('title', 'Без названия')
+            # Убираем из названия лишние слова типа "Official Video", чтобы было красиво
+            clean_title = title.replace("(Official Video)", "").replace("Official Audio", "").replace("|", "-")
+            btn_text = (clean_title[:45] + '..') if len(clean_title) > 45 else clean_title
+            markup.add(types.InlineKeyboardButton(text=btn_text, callback_data=f"yt_{i}"))
+        
+        bot.delete_message(message.chat.id, wait.message_id)
+        bot.send_message(message.chat.id, f"🎵 Актуально по запросу: *{query}*", 
                          reply_markup=markup, parse_mode='Markdown')
     except Exception:
-        bot.send_message(message.chat.id, "⚠️ Ошибка. Попробуй еще раз.")
+        bot.send_message(message.chat.id, "⚠️ Ошибка обновления чарта. Попробуй позже.")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('tr_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('yt_'))
 def send_track(call):
     idx = int(call.data.split('_')[1])
     if call.message.chat.id not in user_results:
         bot.answer_callback_query(call.id, "Поищи заново.")
         return
 
-    track = user_results[call.message.chat.id][idx]
-    
-    # Исправляем отображение (убираем рандомные буквы из плеера)
-    artist_name = track['artist']['name']
-    track_title = track['title']
-    audio_url = track['preview']
+    track_info = user_results[call.message.chat.id][idx]
+    url = track_info['url']
+    title = track_info.get('title', 'Music track')
 
-    bot.answer_callback_query(call.id, f"🎵 {track_title}")
+    bot.answer_callback_query(call.id, "📥 Загрузка полной версии...")
     
+    # Отправляем аудио. Плеер Telegram подхватит название из заголовка YouTube
     bot.send_audio(
         call.message.chat.id, 
-        audio_url, 
-        title=track_title, 
-        performer=artist_name,
-        caption=f"✅ {artist_name} — {track_title}"
+        url, 
+        title=title,
+        performer="TOP 2026",
+        caption=f"✅ Полная версия: {title}"
     )
 
 if __name__ == '__main__':
