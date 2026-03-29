@@ -3,101 +3,99 @@ from telebot import types
 from sclib import SoundcloudAPI
 import os
 
-# Твой токен уже на месте!
+# Твой токен
 TG_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 
 bot = telebot.TeleBot(TG_TOKEN)
-api = SoundcloudAPI()
 
-# Временное хранилище для треков, чтобы бот знал, что скачивать
+# Временное хранилище для треков
 user_cache = {}
 
+# --- ГЛАВНОЕ МЕНЮ ---
+def main_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    # Твои три кнопки: Популярное и Новинки в ряд, Поиск снизу
+    markup.add(types.KeyboardButton("🚀 Популярное"), types.KeyboardButton("✨ Новинки"))
+    markup.add(types.KeyboardButton("🔍 Поиск музыки"))
+    return markup
+
+# --- ОБРАБОТЧИКИ ---
 @bot.message_handler(commands=['start'])
 def start(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("🔥 ТОП Чарт", "🆕 Новинки")
     bot.send_message(
         message.chat.id, 
-        "🎵 **Музыкальный бот SoundCloud запущен!**\n\nНапиши название песни или артиста, и я найду лучшие варианты.", 
-        reply_markup=markup, 
+        "👋 **Привет! Твой музыкальный плеер готов.**\n\nВыбирай категорию кнопками или просто напиши название песни!",
+        reply_markup=main_menu(),
         parse_mode='Markdown'
     )
 
-@bot.message_handler(func=lambda m: m.text in ["🔥 ТОП Чарт", "🆕 Новинки"])
-def handle_charts(message):
-    query = "Top Hits" if "ТОП" in message.text else "New Music"
-    search_and_send(message, query)
+@bot.message_handler(func=lambda m: m.text in ["🚀 Популярное", "✨ Новинки", "🔍 Поиск музыки"])
+def handle_menu(message):
+    if message.text == "🔍 Поиск музыки":
+        bot.send_message(message.chat.id, "⌨️ Напиши название песни или артиста (например: *ЛСП*):", parse_mode='Markdown')
+        return
+    
+    query = "Top Hits" if "Популярное" in message.text else "New Releases"
+    perform_search(message, query)
 
 @bot.message_handler(content_types=['text'])
-def handle_search(message):
-    # Пропускаем, если нажата кнопка меню
-    if message.text in ["🔥 ТОП Чарт", "🆕 Новинки"]:
-        return
-    search_and_send(message, message.text)
+def handle_text_search(message):
+    if message.text not in ["🚀 Популярное", "✨ Новинки", "🔍 Поиск музыки"]:
+        perform_search(message, message.text)
 
-def search_and_send(message, query):
-    wait_msg = bot.send_message(message.chat.id, "🔍 Ищу лучшие треки...")
+def perform_search(message, query):
+    wait_msg = bot.send_message(message.chat.id, "🔎 *Ищу треки...*", parse_mode='Markdown')
     try:
-        # Ищем 6 вариантов
+        # Важно: создаем API внутри поиска для стабильности
+        api = SoundcloudAPI() 
         tracks = list(api.search_tracks(query))[:6]
         
         if not tracks:
-            bot.edit_message_text("Ничего не найдено 😔 Попробуй другой запрос.", message.chat.id, wait_msg.message_id)
+            bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, wait_msg.message_id)
             return
 
         user_cache[message.chat.id] = tracks
         
-        response_text = f"🎶 **Результаты по запросу:** _{query}_\n\n"
+        text = f"🎵 **Результаты:** _{query}_\n\n"
         markup = types.InlineKeyboardMarkup(row_width=3)
-        buttons = []
+        btns = []
 
         for i, track in enumerate(tracks, 1):
-            response_text += f"{i}. {track.artist} — {track.title}\n"
-            buttons.append(types.InlineKeyboardButton(text=str(i), callback_data=f"sc_{i-1}"))
+            text += f"{i}. {track.artist} — {track.title}\n"
+            btns.append(types.InlineKeyboardButton(text=f"[{i}]", callback_data=f"dl_{i-1}"))
         
-        markup.add(*buttons)
+        markup.add(*btns)
         bot.delete_message(message.chat.id, wait_msg.message_id)
-        bot.send_message(message.chat.id, response_text, reply_markup=markup, parse_mode='Markdown')
+        bot.send_message(message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
 
-    except Exception as e:
-        print(f"Ошибка поиска: {e}")
-        bot.send_message(message.chat.id, "❌ Произошла ошибка при поиске. Попробуй позже.")
+    except Exception:
+        bot.send_message(message.chat.id, "⚠️ Ошибка поиска. Попробуй еще раз через 10 секунд.")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('sc_'))
-def handle_download(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith('dl_'))
+def download(call):
     index = int(call.data.split('_')[1])
     user_id = call.message.chat.id
     
     if user_id not in user_cache:
-        bot.answer_callback_query(call.id, "Результаты устарели, поищи заново.")
+        bot.answer_callback_query(call.id, "Ошибка! Поищи заново.")
         return
 
     track = user_cache[user_id][index]
-    bot.answer_callback_query(call.id, "🚀 Начинаю загрузку...")
+    bot.answer_callback_query(call.id, "⚡️ Загружаю...")
     
     file_path = f"{track.id}.mp3"
     try:
-        # Скачиваем во временный файл
+        api = SoundcloudAPI()
         with open(file_path, 'wb+') as fp:
             track.write_mp3_to(fp)
         
-        # Отправляем аудио пользователю
         with open(file_path, 'rb') as audio:
-            bot.send_audio(
-                user_id, 
-                audio, 
-                title=track.title, 
-                performer=track.artist,
-                caption=f"🎧 Найдено через бота"
-            )
-    except Exception as e:
-        print(f"Ошибка загрузки: {e}")
-        bot.send_message(user_id, "❌ Не удалось скачать этот трек.")
+            bot.send_audio(user_id, audio, title=track.title, performer=track.artist)
+    except:
+        bot.send_message(user_id, "❌ Не удалось скачать файл.")
     finally:
-        # Удаляем файл с хостинга, чтобы не занимать место
         if os.path.exists(file_path):
             os.remove(file_path)
 
 if __name__ == '__main__':
-    print("Бот в эфире!")
     bot.polling(none_stop=True)
