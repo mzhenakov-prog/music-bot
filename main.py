@@ -1,21 +1,12 @@
 import telebot
 from telebot import types
-import yt_dlp
-import os
+import requests
 
 # Твой токен
 TG_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 bot = telebot.TeleBot(TG_TOKEN)
 
-# Настройки поиска (имитация запросов ВК чартов)
-YDL_OPTIONS = {
-    'format': 'bestaudio/best',
-    'noplaylist': True,
-    'quiet': True,
-    'default_search': 'ytsearch15',
-    'extract_flat': False,
-}
-
+# Хранилище результатов
 user_results = {}
 
 def main_menu():
@@ -26,36 +17,31 @@ def main_menu():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    # Описание бота как ты просил
-    about = (
-        "🎵 **VK Music Search | Поиск музыки**\n\n"
-        "Добро пожаловать! Здесь ты можешь найти любой трек из чартов ВК и СНГ.\n"
-        "Просто введи название песни или имя артиста."
-    )
+    about = "🎵 **Музыкальный поиск ВК & СНГ**\n\nНапиши название или артиста. Я найду все варианты!"
     bot.send_message(message.chat.id, about, reply_markup=main_menu(), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda m: m.text in ["🚀 Популярное", "✨ Новинки", "🔍 Поиск музыки"])
 def menu_logic(message):
     if message.text == "🔍 Поиск музыки":
-        bot.send_message(message.chat.id, "⌨️ Напиши название (например: *Три дня дождя*):", parse_mode='Markdown')
+        bot.send_message(message.chat.id, "⌨️ Введи название:")
     elif message.text == "🚀 Популярное":
-        search_music(message, "ВК Чарты 2026 топ 100")
+        fast_search(message, "Russian Top Hits 2026")
     elif message.text == "✨ Новинки":
-        search_music(message, "Новинки музыки 2026 СНГ")
+        fast_search(message, "Новинки СНГ 2026")
 
 @bot.message_handler(content_types=['text'])
 def text_handler(message):
     if message.text not in ["🚀 Популярное", "✨ Новинки", "🔍 Поиск музыки"]:
-        search_music(message, message.text)
+        fast_search(message, message.text)
 
-def search_music(message, query):
-    wait = bot.send_message(message.chat.id, "🔎 *Ищу треки в базе ВК...*", parse_mode='Markdown')
+def fast_search(message, query):
+    wait = bot.send_message(message.chat.id, "🔎 *Ищу...*", parse_mode='Markdown')
     try:
-        with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-            # Ищем 15 результатов для гибкости
-            info = ydl.extract_info(f"ytsearch15:{query}", download=False)
-            tracks = info['entries']
-            
+        # Используем очень быстрое API (iTunes/Apple Music база - самая точная по СНГ)
+        url = f"https://itunes.apple.com/search?term={query}&entity=song&limit=20&country=ru"
+        res = requests.get(url).json()
+        tracks = res.get('results', [])
+
         if not tracks:
             bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, wait.message_id)
             return
@@ -64,45 +50,39 @@ def search_music(message, query):
         markup = types.InlineKeyboardMarkup()
         
         for i, track in enumerate(tracks):
-            title = track.get('title', 'Неизвестно')
-            # Очистка названия от мусора (Official Video и т.д.)
-            clean_title = title.split('(')[0].split('[')[0].strip()
-            # Кнопка: Артист — Название
-            display_text = (clean_title[:45] + '..') if len(clean_title) > 45 else clean_title
-            markup.add(types.InlineKeyboardButton(text=display_text, callback_data=f"vk_{i}"))
+            # Формат кнопки: Артист - Название
+            artist = track.get('artistName', 'Артист')
+            title = track.get('trackName', 'Трек')
+            btn_text = f"{artist} — {title}"
+            
+            # Обрезаем, если слишком длинно
+            short_text = (btn_text[:45] + '..') if len(btn_text) > 45 else btn_text
+            markup.add(types.InlineKeyboardButton(text=short_text, callback_data=f"aud_{i}"))
         
         bot.delete_message(message.chat.id, wait.message_id)
-        bot.send_message(message.chat.id, f"🎶 Результаты по запросу: *{query}*", 
+        bot.send_message(message.chat.id, f"🎶 Результаты для: *{query}*", 
                          reply_markup=markup, parse_mode='Markdown')
-    except Exception:
-        bot.send_message(message.chat.id, "⚠️ Ошибка поиска. Попробуй еще раз.")
+    except:
+        bot.send_message(message.chat.id, "⚠️ Ошибка связи.")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('vk_'))
-def send_track(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith('aud_'))
+def send_audio(call):
     idx = int(call.data.split('_')[1])
-    track_info = user_results[call.message.chat.id][idx]
+    track = user_results[call.message.chat.id][idx]
     
-    # Прямая ссылка на аудиопоток (полная версия)
-    url = track_info['url']
-    full_title = track_info.get('title', 'Music')
-    
-    # Пытаемся разделить на Артиста и Название для плеера
-    if " — " in full_title:
-        performer, title = full_title.split(" — ", 1)
-    elif " - " in full_title:
-        performer, title = full_title.split(" - ", 1)
-    else:
-        performer, title = "VK Music", full_title
+    artist = track.get('artistName')
+    title = track.get('trackName')
+    audio_url = track.get('previewUrl') # Прямая ссылка на поток
 
-    bot.answer_callback_query(call.id, "📥 Отправляю полную версию...")
+    bot.answer_callback_query(call.id, "📥 Отправляю...")
     
-    # Отправляем аудио (будет отображаться в плеере с кнопкой Play)
+    # Отправка как Аудио (Плеер с кнопкой Play)
     bot.send_audio(
         call.message.chat.id, 
-        url, 
-        title=title.strip(), 
-        performer=performer.strip(),
-        caption=f"🎧 **{performer.strip()} — {title.strip()}**",
+        audio_url, 
+        title=title, 
+        performer=artist,
+        caption=f"🎧 **{artist} — {title}**",
         parse_mode='Markdown'
     )
 
