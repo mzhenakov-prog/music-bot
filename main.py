@@ -33,41 +33,26 @@ def is_subscribed(user_id):
     except:
         return False
 
-def is_original_track(title):
-    """Жёсткая фильтрация: только оригинальные треки"""
+def is_good_track(title):
+    """Умеренная фильтрация: исключаем явные плейлисты и сборники"""
     title_lower = title.lower()
     
-    # Слова, которые исключают трек
+    # Только явные плохие слова
     bad_words = [
-        # Плейлисты и сборники
-        'плейлист', 'playlist', 'mix', 'микс', 'сборник', 'хиты', 'top', 'best',
-        'megamix', 'mashup', 'popurri', 'попурри', 'best of', 'greatest hits',
-        # Живые выступления и концерты
-        'live', 'концерт', 'concert', 'live session', 'acoustic', 'акустика',
-        # Ремиксы и каверы
-        'remix', 'ремикс', 'cover', 'кавер', 'version', 'instrumental', 'минус',
-        # Специальные форматы
-        'slowed', 'reverb', 'speed up', 'nightcore', 'sped up', '8d', 'bass boosted',
-        # Клипы и видео
-        'official video', 'official music', 'lyrics', 'текст', 'video clip', 'клип'
+        'плейлист', 'playlist', 'mix', 'сборник', 'megamix', 'попурри',
+        'live', 'концерт', 'remix', 'cover', 'кавер', 'instrumental', 'минус',
+        'slowed', 'reverb', 'speed up', 'nightcore', '8d'
     ]
     
     for word in bad_words:
         if word in title_lower:
             return False
     
-    # Проверяем наличие разделителя " - " (исполнитель - название)
-    if ' - ' not in title:
-        return False
-    
-    # Исключаем слишком короткие или длинные названия
-    if len(title) < 6 or len(title) > 120:
-        return False
-    
+    # Длительность 1.5 - 8 минут
     return True
 
 def search_youtube(query, max_results=20):
-    """Поиск треков с жёсткой фильтрацией"""
+    """Поиск треков"""
     ydl_opts = {'quiet': True, 'default_search': 'ytsearch', 'extract_flat': True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         search_query = f"ytsearch{max_results}:{query}"
@@ -78,8 +63,8 @@ def search_youtube(query, max_results=20):
                 if entry:
                     title = entry.get('title', 'Unknown')
                     duration = entry.get('duration', 0)
-                    # Фильтр: длительность 1.5-8 минут, оригинальный трек
-                    if 90 <= duration <= 480 and is_original_track(title):
+                    # Фильтр: длительность 1.5-8 минут, не плейлист
+                    if 90 <= duration <= 480 and is_good_track(title):
                         tracks.append({
                             'title': title,
                             'url': entry.get('url') or f"https://youtube.com/watch?v={entry.get('id')}",
@@ -94,7 +79,7 @@ def get_popular():
     global popular_cache
     if popular_cache:
         return popular_cache
-    popular_cache = search_youtube("популярная музыка")
+    popular_cache = search_youtube("популярные песни")
     return popular_cache
 
 def download_audio(url, title):
@@ -111,7 +96,7 @@ def download_audio(url, title):
 
 def show_tracks(chat_id, tracks, title):
     if not tracks:
-        bot.send_message(chat_id, "❌ Ничего не найдено. Попробуй уточнить запрос.")
+        bot.send_message(chat_id, "❌ Ничего не найдено. Попробуй другой запрос.")
         return
     user_tracks[chat_id] = tracks
     markup = types.InlineKeyboardMarkup(row_width=1)
@@ -119,10 +104,7 @@ def show_tracks(chat_id, tracks, title):
         duration = track.get('duration', 0)
         minutes = duration // 60
         seconds = duration % 60
-        # Обрезаем название, оставляем только исполнитель - трек
-        display_title = track['title']
-        if len(display_title) > 50:
-            display_title = display_title[:47] + '...'
+        display_title = track['title'][:50]
         button_text = f"🎵 {display_title} [{minutes}:{seconds:02d}]"
         markup.add(types.InlineKeyboardButton(text=button_text, callback_data=f"play_{i}"))
     bot.send_message(chat_id, f"🎵 *{title}*", reply_markup=markup, parse_mode='Markdown')
@@ -142,7 +124,7 @@ def search_button(message):
     if not is_subscribed(message.from_user.id):
         bot.send_message(message.chat.id, "⚠️ Сначала подпишись на канал!")
         return
-    bot.send_message(message.chat.id, "🔍 *Напиши исполнителя и название* (например: Miyagi I Got Love)", parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🔍 *Напиши название песни или исполнителя*", parse_mode='Markdown')
     bot.register_next_step_handler(message, process_search)
 
 def process_search(message):
@@ -155,7 +137,7 @@ def process_search(message):
         bot.delete_message(message.chat.id, wait.message_id)
         show_tracks(message.chat.id, tracks, f"Результаты: {message.text}")
     else:
-        bot.edit_message_text("❌ Ничего не найдено. Попробуй написать исполнителя и название.", message.chat.id, wait.message_id)
+        bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, wait.message_id)
 
 @bot.message_handler(func=lambda msg: msg.text == "🔥 Популярное")
 def popular_button(message):
