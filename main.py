@@ -34,23 +34,20 @@ def is_subscribed(user_id):
         return False
 
 def is_good_track(title):
-    """Умеренная фильтрация: исключаем явные плейлисты и сборники"""
+    """Умеренная фильтрация"""
     title_lower = title.lower()
-    
     bad_words = [
         'плейлист', 'playlist', 'mix', 'сборник', 'megamix', 'попурри',
         'live', 'концерт', 'remix', 'cover', 'кавер', 'instrumental', 'минус',
         'slowed', 'reverb', 'speed up', 'nightcore', '8d'
     ]
-    
     for word in bad_words:
         if word in title_lower:
             return False
-    
     return True
 
-def search_youtube(query, max_results=20):
-    """Поиск треков"""
+def search_youtube(query, max_results=30):
+    """Поиск треков с большим количеством результатов"""
     ydl_opts = {'quiet': True, 'default_search': 'ytsearch', 'extract_flat': True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         search_query = f"ytsearch{max_results}:{query}"
@@ -61,23 +58,47 @@ def search_youtube(query, max_results=20):
                 if entry:
                     title = entry.get('title', 'Unknown')
                     duration = entry.get('duration', 0)
-                    # Фильтр: длительность 1.5-8 минут, не плейлист
-                    if 90 <= duration <= 480 and is_good_track(title):
+                    if duration is None:
+                        duration = 0
+                    try:
+                        duration = int(duration)
+                    except:
+                        duration = 0
+                    # Шире диапазон: 1.5 - 10 минут
+                    if 90 <= duration <= 600 and is_good_track(title):
                         tracks.append({
                             'title': title,
                             'url': entry.get('url') or f"https://youtube.com/watch?v={entry.get('id')}",
                             'duration': duration
                         })
-                        if len(tracks) >= 10:
+                        if len(tracks) >= 20:
                             break
         return tracks
 
 def get_popular():
-    """Получает популярные треки"""
+    """Получает популярные треки из разных запросов"""
     global popular_cache
     if popular_cache:
         return popular_cache
-    popular_cache = search_youtube("популярные песни")
+    
+    queries = [
+        "популярные песни 2026",
+        "хиты 2026",
+        "новые песни 2026",
+        "топ 100 песен",
+        "популярная музыка"
+    ]
+    
+    all_tracks = []
+    for q in queries:
+        tracks = search_youtube(q, max_results=15)
+        for track in tracks:
+            if not any(t['title'] == track['title'] for t in all_tracks):
+                all_tracks.append(track)
+        if len(all_tracks) >= 20:
+            break
+    
+    popular_cache = all_tracks[:20]
     return popular_cache
 
 def download_audio(url, title):
@@ -92,6 +113,17 @@ def download_audio(url, title):
         filename = ydl.prepare_filename(info)
         return filename
 
+def format_duration(seconds):
+    if seconds is None:
+        return "00:00"
+    try:
+        seconds = int(seconds)
+        minutes = seconds // 60
+        secs = seconds % 60
+        return f"{minutes}:{secs:02d}"
+    except:
+        return "00:00"
+
 def show_tracks(chat_id, tracks, title):
     if not tracks:
         bot.send_message(chat_id, "❌ Ничего не найдено. Попробуй другой запрос.")
@@ -99,12 +131,9 @@ def show_tracks(chat_id, tracks, title):
     user_tracks[chat_id] = tracks
     markup = types.InlineKeyboardMarkup(row_width=1)
     for i, track in enumerate(tracks[:10]):
-        duration = track.get('duration', 0)
-        duration = int(duration)  # 🔧 фикс: преобразуем float в int
-        minutes = duration // 60
-        seconds = duration % 60
+        duration_str = format_duration(track.get('duration'))
         display_title = track['title'][:50]
-        button_text = f"🎵 {display_title} [{minutes}:{seconds:02d}]"
+        button_text = f"🎵 {display_title} [{duration_str}]"
         markup.add(types.InlineKeyboardButton(text=button_text, callback_data=f"play_{i}"))
     bot.send_message(chat_id, f"🎵 *{title}*", reply_markup=markup, parse_mode='Markdown')
 
