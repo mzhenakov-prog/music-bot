@@ -37,7 +37,6 @@ def is_good_track(title):
     """Умеренная фильтрация: исключаем явные плейлисты и сборники"""
     title_lower = title.lower()
     
-    # Только явные плохие слова
     bad_words = [
         'плейлист', 'playlist', 'mix', 'сборник', 'megamix', 'попурри',
         'live', 'концерт', 'remix', 'cover', 'кавер', 'instrumental', 'минус',
@@ -48,7 +47,6 @@ def is_good_track(title):
         if word in title_lower:
             return False
     
-    # Длительность 1.5 - 8 минут
     return True
 
 def search_youtube(query, max_results=20):
@@ -102,6 +100,7 @@ def show_tracks(chat_id, tracks, title):
     markup = types.InlineKeyboardMarkup(row_width=1)
     for i, track in enumerate(tracks[:10]):
         duration = track.get('duration', 0)
+        duration = int(duration)  # 🔧 фикс: преобразуем float в int
         minutes = duration // 60
         seconds = duration % 60
         display_title = track['title'][:50]
