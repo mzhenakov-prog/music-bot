@@ -9,7 +9,7 @@ import sqlite3
 from datetime import datetime
 
 # ========== НАСТРОЙКИ ==========
-BOT_TOKEN = '8347775737:AAFSFwXxse-7c3SsOu4JSTN7jSfdYh4vJa4'
+BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 ADMIN_ID = 405071693  # 👈 ТВОЙ TELEGRAM ID
 bot = telebot.TeleBot(BOT_TOKEN)
 
