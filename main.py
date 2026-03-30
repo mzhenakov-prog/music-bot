@@ -53,42 +53,6 @@ def search_vk(query):
         print(f"Ошибка VK: {e}")
         return []
 
-# ========== СКАЧИВАНИЕ MP3 ==========
-def download_mp3(url, title):
-    opts = {
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'outtmpl': f'/tmp/{title}.%(ext)s',
-        'quiet': True,
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
-        return filename.rsplit('.', 1)[0] + '.mp3'
-
-# ========== ПОКАЗ ТРЕКОВ С КНОПКАМИ ==========
-def show_tracks_with_buttons(chat_id, tracks, title):
-    if not tracks:
-        bot.send_message(chat_id, "❌ Ничего не найдено.")
-        return
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for i, track in enumerate(tracks[:10]):
-        artist = track.get('artist', 'Unknown')
-        song_title = track.get('title', 'Track')
-        button_text = f"🎵 {artist} - {song_title[:40]}"
-        markup.add(types.InlineKeyboardButton(text=button_text, callback_data=f"play_{i}"))
-    
-    # Сохраняем треки
-    user_tracks[chat_id] = tracks
-    
-    # Отправляем сообщение с кнопками
-    bot.send_message(chat_id, f"🎵 *{title}*", reply_markup=markup, parse_mode='Markdown')
-
 # ========== СТАРТ ==========
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -118,8 +82,20 @@ def process_search(message):
     tracks = search_vk(message.text)
     
     if tracks:
+        user_tracks[message.chat.id] = tracks
+        
+        # СОЗДАЁМ КНОПКИ
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for i, track in enumerate(tracks):
+            artist = track.get('artist', 'Unknown')
+            title = track.get('title', 'Track')
+            button_text = f"🎵 {artist} - {title}"
+            markup.add(types.InlineKeyboardButton(text=button_text[:50], callback_data=f"play_{i}"))
+        
+        # Удаляем сообщение "Ищу..."
         bot.delete_message(message.chat.id, wait.message_id)
-        show_tracks_with_buttons(message.chat.id, tracks, f"Результаты для: {message.text}")
+        # Отправляем результат с кнопками
+        bot.send_message(message.chat.id, f"🎵 *Результаты для:* {message.text}", reply_markup=markup, parse_mode='Markdown')
     else:
         bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, wait.message_id)
 
@@ -134,8 +110,16 @@ def new_button(message):
     tracks = search_vk("новинки музыки")
     
     if tracks:
+        user_tracks[message.chat.id] = tracks
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for i, track in enumerate(tracks):
+            artist = track.get('artist', 'Unknown')
+            title = track.get('title', 'Track')
+            button_text = f"🎵 {artist} - {title}"
+            markup.add(types.InlineKeyboardButton(text=button_text[:50], callback_data=f"play_{i}"))
+        
         bot.delete_message(message.chat.id, wait.message_id)
-        show_tracks_with_buttons(message.chat.id, tracks, "🆕 Новинки музыки")
+        bot.send_message(message.chat.id, "🆕 *Новинки музыки:*", reply_markup=markup, parse_mode='Markdown')
     else:
         bot.edit_message_text("❌ Не удалось загрузить новинки.", message.chat.id, wait.message_id)
 
@@ -150,8 +134,16 @@ def top_button(message):
     tracks = search_vk("популярная музыка")
     
     if tracks:
+        user_tracks[message.chat.id] = tracks
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for i, track in enumerate(tracks):
+            artist = track.get('artist', 'Unknown')
+            title = track.get('title', 'Track')
+            button_text = f"🎵 {artist} - {title}"
+            markup.add(types.InlineKeyboardButton(text=button_text[:50], callback_data=f"play_{i}"))
+        
         bot.delete_message(message.chat.id, wait.message_id)
-        show_tracks_with_buttons(message.chat.id, tracks, "🔥 Топ 100")
+        bot.send_message(message.chat.id, "🔥 *Топ 100:*", reply_markup=markup, parse_mode='Markdown')
     else:
         bot.edit_message_text("❌ Не удалось загрузить топ.", message.chat.id, wait.message_id)
 
@@ -174,18 +166,8 @@ def play_track(call):
         bot.answer_callback_query(call.id, "❌ Ссылка на трек недоступна")
         return
     
-    bot.answer_callback_query(call.id, f"⏳ Скачиваю: {artist} - {title}")
-    
-    status_msg = bot.send_message(call.message.chat.id, f"🎵 *{artist} - {title}*\n⏳ Скачивание...", parse_mode='Markdown')
-    
-    try:
-        file_path = download_mp3(url, f"{artist} - {title}")
-        with open(file_path, 'rb') as audio:
-            bot.send_audio(call.message.chat.id, audio, title=title, performer=artist)
-        os.remove(file_path)
-        bot.delete_message(call.message.chat.id, status_msg.message_id)
-    except Exception as e:
-        bot.edit_message_text(f"❌ Ошибка: {e}", call.message.chat.id, status_msg.message_id)
+    bot.answer_callback_query(call.id, f"🎵 {artist} - {title}")
+    bot.send_message(call.message.chat.id, f"🎵 *{artist} - {title}*\n\n[🎧 Слушать на ВК]({url})", parse_mode='Markdown')
 
 # ========== ПРОВЕРКА ПОДПИСКИ ==========
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
