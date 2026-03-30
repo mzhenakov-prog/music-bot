@@ -5,10 +5,54 @@ import os
 import re
 import random
 import time
+import sqlite3
+from datetime import datetime
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8347775737:AAFSFwXxse-7c3SsOu4JSTN7jSfdYh4vJa4'
+ADMIN_ID = 405071693  # 👈 ТВОЙ TELEGRAM ID
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# ========== БАЗА ДАННЫХ ==========
+def init_db():
+    conn = sqlite3.connect('music_bot.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users
+                 (user_id INTEGER PRIMARY KEY,
+                  username TEXT,
+                  first_seen TEXT,
+                  referrer_id INTEGER,
+                  ref_count INTEGER DEFAULT 0)''')
+    conn.commit()
+    conn.close()
+
+def add_user(user_id, username, referrer_id=None):
+    conn = sqlite3.connect('music_bot.db')
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO users (user_id, username, first_seen, referrer_id) VALUES (?, ?, ?, ?)",
+              (user_id, username, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), referrer_id))
+    if referrer_id:
+        c.execute("UPDATE users SET ref_count = ref_count + 1 WHERE user_id = ?", (referrer_id,))
+    conn.commit()
+    conn.close()
+
+def get_ref_stats(user_id):
+    conn = sqlite3.connect('music_bot.db')
+    c = conn.cursor()
+    c.execute("SELECT ref_count FROM users WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else 0
+
+def get_total_users():
+    conn = sqlite3.connect('music_bot.db')
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users")
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+init_db()
 
 # ========== ТВОИ ТРЕКИ ==========
 TOP_TRACKS = [
@@ -37,12 +81,16 @@ NEW_TRACKS = [
     "КУПЕР - SQWOZ BAB", "Тону - HOLLYFLAME", "SMS - UncleFlexxx"
 ]
 
-# ========== КНОПКИ ==========
-def main_menu():
+# ========== КНОПКИ (разные для админа и пользователей) ==========
+def main_menu(is_admin=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("🎵 Поиск музыки", "🆕 Новинки")
-    markup.add("🔥 Топ 100", "🎲 Рандом")
-    markup.add("❓ Помощь")
+    if is_admin:
+        markup.add("🎵 Поиск музыки", "🆕 Новинки")
+        markup.add("🔥 Топ 100", "🔗 Рефералка")
+        markup.add("❓ Помощь")
+    else:
+        markup.add("🎵 Поиск музыки", "🆕 Новинки")
+        markup.add("🔥 Топ 100", "❓ Помощь")
     return markup
 
 # ========== ПОИСК И СКАЧИВАНИЕ ==========
@@ -96,7 +144,22 @@ def show_tracks(chat_id, tracks, title):
 # ========== КОМАНДЫ ==========
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "🎵 *Музыкальный бот готов!*\n\nИспользуй кнопки внизу.", reply_markup=main_menu(), parse_mode='Markdown')
+    user_id = message.from_user.id
+    username = message.from_user.username
+    
+    # Реферальная ссылка
+    args = message.text.split()
+    referrer = None
+    if len(args) > 1 and args[1].startswith('ref_'):
+        try:
+            referrer = int(args[1].split('_')[1])
+        except:
+            pass
+    
+    add_user(user_id, username, referrer)
+    
+    is_admin = (user_id == ADMIN_ID)
+    bot.send_message(message.chat.id, "🎵 *Музыкальный бот готов!*\n\nИспользуй кнопки внизу.", reply_markup=main_menu(is_admin), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "🎵 Поиск музыки")
 def search_cmd(message):
@@ -122,18 +185,29 @@ def top_cmd(message):
     tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in TOP_TRACKS[:30]]
     show_tracks(message.chat.id, tracks, "🔥 Топ 100")
 
-@bot.message_handler(func=lambda msg: msg.text == "🎲 Рандом")
-def random_cmd(message):
-    track = random.choice(TOP_TRACKS)
-    msg = bot.send_message(message.chat.id, f"🎲 *Случайный трек:* {track}\n⏳ Скачиваю...", parse_mode='Markdown')
-    try:
-        file = download_audio(f"https://youtube.com/results?search_query={track.replace(' ', '+')}", track)
-        with open(file, 'rb') as f:
-            bot.send_audio(message.chat.id, f, title=track)
-        os.remove(file)
-        bot.delete_message(message.chat.id, msg.message_id)
-    except Exception as e:
-        bot.edit_message_text(f"❌ Ошибка: {e}", message.chat.id, msg.message_id, parse_mode='Markdown')
+@bot.message_handler(func=lambda msg: msg.text == "🔗 Рефералка")
+def ref_cmd(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "❌ Эта кнопка только для создателя бота.")
+        return
+    
+    user_id = message.from_user.id
+    ref_count = get_ref_stats(user_id)
+    total_users = get_total_users()
+    
+    ref_link = f"https://t.me/твой_бот?start=ref_{user_id}"
+    
+    text = f"""🔗 *Реферальная система*
+
+Твоя ссылка: `{ref_link}`
+
+📊 *Статистика:*
+• Приглашено: {ref_count} чел.
+• Всего пользователей: {total_users} чел.
+
+Отправляй ссылку друзьям — они заходят в бота, а ты видишь статистику!"""
+    
+    bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "❓ Помощь")
 def help_cmd(message):
@@ -143,10 +217,9 @@ def help_cmd(message):
 • Нажми 🔍 Поиск и введи название
 • Нажми 🆕 Новинки — свежие треки
 • Нажми 🔥 Топ 100 — популярные треки
-• Нажми 🎲 Рандом — случайный трек
 
 *По вопросам:* @avgustc"""
-    bot.send_message(message.chat.id, help_text, reply_markup=main_menu(), parse_mode='Markdown')
+    bot.send_message(message.chat.id, help_text, reply_markup=main_menu(message.from_user.id == ADMIN_ID), parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('play_'))
 def play_track(call):
