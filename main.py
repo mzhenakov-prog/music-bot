@@ -44,6 +44,8 @@ def search_vk(query):
         r = requests.get(url, params=params)
         data = r.json()
         
+        print(f"🔍 Поиск '{query}': {data}")  # Лог для отладки
+        
         if 'response' in data:
             return data['response']['items']
         return []
@@ -67,6 +69,25 @@ def download_mp3(url, title):
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
         return filename.rsplit('.', 1)[0] + '.mp3'
+
+# ========== ПОКАЗ ТРЕКОВ С КНОПКАМИ ==========
+def show_tracks_with_buttons(chat_id, tracks, title):
+    if not tracks:
+        bot.send_message(chat_id, "❌ Ничего не найдено.")
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for i, track in enumerate(tracks[:10]):
+        artist = track.get('artist', 'Unknown')
+        song_title = track.get('title', 'Track')
+        button_text = f"🎵 {artist} - {song_title[:40]}"
+        markup.add(types.InlineKeyboardButton(text=button_text, callback_data=f"play_{i}"))
+    
+    # Сохраняем треки
+    user_tracks[chat_id] = tracks
+    
+    # Отправляем сообщение с кнопками
+    bot.send_message(chat_id, f"🎵 *{title}*", reply_markup=markup, parse_mode='Markdown')
 
 # ========== СТАРТ ==========
 @bot.message_handler(commands=['start'])
@@ -97,17 +118,8 @@ def process_search(message):
     tracks = search_vk(message.text)
     
     if tracks:
-        user_tracks[message.chat.id] = tracks
-        
-        # Создаём кнопки с треками
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for i, track in enumerate(tracks[:10]):
-            artist = track.get('artist', 'Unknown')
-            title = track.get('title', 'Track')
-            markup.add(types.InlineKeyboardButton(text=f"🎵 {artist} - {title[:40]}", callback_data=f"play_{i}"))
-        
         bot.delete_message(message.chat.id, wait.message_id)
-        bot.send_message(message.chat.id, f"🎵 *Результаты для:* {message.text}", reply_markup=markup, parse_mode='Markdown')
+        show_tracks_with_buttons(message.chat.id, tracks, f"Результаты для: {message.text}")
     else:
         bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, wait.message_id)
 
@@ -122,15 +134,8 @@ def new_button(message):
     tracks = search_vk("новинки музыки")
     
     if tracks:
-        user_tracks[message.chat.id] = tracks
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for i, track in enumerate(tracks[:10]):
-            artist = track.get('artist', 'Unknown')
-            title = track.get('title', 'Track')
-            markup.add(types.InlineKeyboardButton(text=f"🎵 {artist} - {title[:40]}", callback_data=f"play_{i}"))
-        
         bot.delete_message(message.chat.id, wait.message_id)
-        bot.send_message(message.chat.id, "🆕 *Новинки музыки:*", reply_markup=markup, parse_mode='Markdown')
+        show_tracks_with_buttons(message.chat.id, tracks, "🆕 Новинки музыки")
     else:
         bot.edit_message_text("❌ Не удалось загрузить новинки.", message.chat.id, wait.message_id)
 
@@ -145,15 +150,8 @@ def top_button(message):
     tracks = search_vk("популярная музыка")
     
     if tracks:
-        user_tracks[message.chat.id] = tracks
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for i, track in enumerate(tracks[:10]):
-            artist = track.get('artist', 'Unknown')
-            title = track.get('title', 'Track')
-            markup.add(types.InlineKeyboardButton(text=f"🎵 {artist} - {title[:40]}", callback_data=f"play_{i}"))
-        
         bot.delete_message(message.chat.id, wait.message_id)
-        bot.send_message(message.chat.id, "🔥 *Топ 100:*", reply_markup=markup, parse_mode='Markdown')
+        show_tracks_with_buttons(message.chat.id, tracks, "🔥 Топ 100")
     else:
         bot.edit_message_text("❌ Не удалось загрузить топ.", message.chat.id, wait.message_id)
 
