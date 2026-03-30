@@ -1,7 +1,6 @@
 import telebot
 from telebot import types
 import requests
-import time
 import os
 import yt_dlp
 
@@ -13,7 +12,6 @@ CHANNEL_URL = 'https://t.me/lyubimkatt'
 
 bot = telebot.TeleBot(TG_TOKEN)
 
-# Хранилище для результатов поиска
 user_tracks = {}
 
 # ========== КНОПКИ ==========
@@ -39,19 +37,86 @@ def search_vk(query):
             'q': query,
             'access_token': VK_TOKEN,
             'v': '5.131',
-            'count': 10
+            'count': 10,
+            'sort': 2  # 2 = по популярности
         }
         r = requests.get(url, params=params)
         data = r.json()
-        
-        print(f"🔍 Поиск '{query}': {data}")  # Лог для отладки
-        
         if 'response' in data:
             return data['response']['items']
         return []
     except Exception as e:
         print(f"Ошибка VK: {e}")
         return []
+
+# ========== НОВИНКИ (рекомендации VK) ==========
+def get_new_tracks():
+    try:
+        # Метод getRecommendations возвращает новые треки
+        url = 'https://api.vk.com/method/audio.getRecommendations'
+        params = {
+            'access_token': VK_TOKEN,
+            'v': '5.131',
+            'count': 10
+        }
+        r = requests.get(url, params=params)
+        data = r.json()
+        if 'response' in data:
+            return data['response']['items']
+        return []
+    except:
+        return []
+
+# ========== ТОП 100 (популярное) ==========
+def get_popular_tracks():
+    try:
+        url = 'https://api.vk.com/method/audio.getPopular'
+        params = {
+            'access_token': VK_TOKEN,
+            'v': '5.131',
+            'count': 10
+        }
+        r = requests.get(url, params=params)
+        data = r.json()
+        if 'response' in data:
+            return data['response']['items']
+        return []
+    except:
+        return []
+
+# ========== СКАЧИВАНИЕ MP3 ИЗ VK ==========
+def download_vk_mp3(url, title):
+    """Скачивает MP3 из VK"""
+    opts = {
+        'format': 'bestaudio/best',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'outtmpl': f'/tmp/{title}.%(ext)s',
+        'quiet': True,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info)
+        return filename.rsplit('.', 1)[0] + '.mp3'
+
+# ========== ПОКАЗ ТРЕКОВ ==========
+def show_tracks(chat_id, tracks, title):
+    if not tracks:
+        bot.send_message(chat_id, "❌ Ничего не найдено.")
+        return
+    
+    user_tracks[chat_id] = tracks
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for i, track in enumerate(tracks[:10]):
+        artist = track.get('artist', 'Unknown')
+        title_track = track.get('title', 'Track')
+        button_text = f"🎵 {artist} - {title_track[:40]}"
+        markup.add(types.InlineKeyboardButton(text=button_text, callback_data=f"play_{i}"))
+    
+    bot.send_message(chat_id, f"🎵 *{title}*", reply_markup=markup, parse_mode='Markdown')
 
 # ========== СТАРТ ==========
 @bot.message_handler(commands=['start'])
@@ -60,11 +125,11 @@ def start(message):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Подписаться на канал", url=CHANNEL_URL))
         markup.add(types.InlineKeyboardButton("✅ Я подписался", callback_data="check_sub"))
-        bot.send_message(message.chat.id, "⚠️ *Доступ закрыт!*\n\nПодпишись на канал, чтобы слушать музыку.", reply_markup=markup, parse_mode='Markdown')
+        bot.send_message(message.chat.id, "⚠️ *Доступ закрыт!*\n\nПодпишись на канал.", reply_markup=markup, parse_mode='Markdown')
     else:
-        bot.send_message(message.chat.id, "🎵 *Муз-бот готов!*\n\nИспользуй кнопки внизу.", reply_markup=main_menu(), parse_mode='Markdown')
+        bot.send_message(message.chat.id, "🎵 *Муз-бот готов!*", reply_markup=main_menu(), parse_mode='Markdown')
 
-# ========== ПОИСК МУЗЫКИ ==========
+# ========== ПОИСК ==========
 @bot.message_handler(func=lambda msg: msg.text == "🎵 Поиск музыки")
 def search_button(message):
     if not is_subscribed(message.from_user.id):
@@ -78,24 +143,12 @@ def process_search(message):
         bot.send_message(message.chat.id, "⚠️ Сначала подпишись на канал!")
         return
     
-    wait = bot.send_message(message.chat.id, "🔎 *Ищу через VK...*", parse_mode='Markdown')
+    wait = bot.send_message(message.chat.id, "🔎 *Ищу...*", parse_mode='Markdown')
     tracks = search_vk(message.text)
     
     if tracks:
-        user_tracks[message.chat.id] = tracks
-        
-        # СОЗДАЁМ КНОПКИ
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for i, track in enumerate(tracks):
-            artist = track.get('artist', 'Unknown')
-            title = track.get('title', 'Track')
-            button_text = f"🎵 {artist} - {title}"
-            markup.add(types.InlineKeyboardButton(text=button_text[:50], callback_data=f"play_{i}"))
-        
-        # Удаляем сообщение "Ищу..."
         bot.delete_message(message.chat.id, wait.message_id)
-        # Отправляем результат с кнопками
-        bot.send_message(message.chat.id, f"🎵 *Результаты для:* {message.text}", reply_markup=markup, parse_mode='Markdown')
+        show_tracks(message.chat.id, tracks, f"Результаты: {message.text}")
     else:
         bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, wait.message_id)
 
@@ -107,19 +160,11 @@ def new_button(message):
         return
     
     wait = bot.send_message(message.chat.id, "🔎 *Загружаю новинки...*", parse_mode='Markdown')
-    tracks = search_vk("новинки музыки")
+    tracks = get_new_tracks()
     
     if tracks:
-        user_tracks[message.chat.id] = tracks
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for i, track in enumerate(tracks):
-            artist = track.get('artist', 'Unknown')
-            title = track.get('title', 'Track')
-            button_text = f"🎵 {artist} - {title}"
-            markup.add(types.InlineKeyboardButton(text=button_text[:50], callback_data=f"play_{i}"))
-        
         bot.delete_message(message.chat.id, wait.message_id)
-        bot.send_message(message.chat.id, "🆕 *Новинки музыки:*", reply_markup=markup, parse_mode='Markdown')
+        show_tracks(message.chat.id, tracks, "🆕 Новинки российской музыки")
     else:
         bot.edit_message_text("❌ Не удалось загрузить новинки.", message.chat.id, wait.message_id)
 
@@ -131,23 +176,15 @@ def top_button(message):
         return
     
     wait = bot.send_message(message.chat.id, "🔎 *Загружаю топ...*", parse_mode='Markdown')
-    tracks = search_vk("популярная музыка")
+    tracks = get_popular_tracks()
     
     if tracks:
-        user_tracks[message.chat.id] = tracks
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for i, track in enumerate(tracks):
-            artist = track.get('artist', 'Unknown')
-            title = track.get('title', 'Track')
-            button_text = f"🎵 {artist} - {title}"
-            markup.add(types.InlineKeyboardButton(text=button_text[:50], callback_data=f"play_{i}"))
-        
         bot.delete_message(message.chat.id, wait.message_id)
-        bot.send_message(message.chat.id, "🔥 *Топ 100:*", reply_markup=markup, parse_mode='Markdown')
+        show_tracks(message.chat.id, tracks, "🔥 Топ 100")
     else:
         bot.edit_message_text("❌ Не удалось загрузить топ.", message.chat.id, wait.message_id)
 
-# ========== ВОСПРОИЗВЕДЕНИЕ ==========
+# ========== СКАЧИВАНИЕ И ОТПРАВКА ==========
 @bot.callback_query_handler(func=lambda call: call.data.startswith('play_'))
 def play_track(call):
     idx = int(call.data.split('_')[1])
@@ -166,8 +203,18 @@ def play_track(call):
         bot.answer_callback_query(call.id, "❌ Ссылка на трек недоступна")
         return
     
-    bot.answer_callback_query(call.id, f"🎵 {artist} - {title}")
-    bot.send_message(call.message.chat.id, f"🎵 *{artist} - {title}*\n\n[🎧 Слушать на ВК]({url})", parse_mode='Markdown')
+    bot.answer_callback_query(call.id, f"⏳ Скачиваю: {artist} - {title}")
+    
+    status_msg = bot.send_message(call.message.chat.id, f"🎵 *{artist} - {title}*\n⏳ Скачивание...", parse_mode='Markdown')
+    
+    try:
+        file_path = download_vk_mp3(url, f"{artist} - {title}")
+        with open(file_path, 'rb') as audio:
+            bot.send_audio(call.message.chat.id, audio, title=title, performer=artist)
+        os.remove(file_path)
+        bot.delete_message(call.message.chat.id, status_msg.message_id)
+    except Exception as e:
+        bot.edit_message_text(f"❌ Ошибка: {e}", call.message.chat.id, status_msg.message_id)
 
 # ========== ПРОВЕРКА ПОДПИСКИ ==========
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
@@ -181,5 +228,5 @@ def check_callback(call):
 
 # ========== ЗАПУСК ==========
 if __name__ == '__main__':
-    print("🎵 VK Music Bot запущен!")
+    print("🎵 VK Music Bot (скачивание MP3) запущен!")
     bot.polling(none_stop=True)
