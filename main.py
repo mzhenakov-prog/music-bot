@@ -18,7 +18,8 @@ CHANNEL_URL = 'https://t.me/lyubimkatt'
 
 bot = telebot.TeleBot(TG_TOKEN)
 user_tracks = {}
-popular_cache = []
+popular_cache = {}
+search_cache = {}  # Кэш результатов поиска {chat_id: {query: tracks, current_page: 0}}
 
 def main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -34,7 +35,6 @@ def is_subscribed(user_id):
         return False
 
 def is_good_track(title):
-    """Умеренная фильтрация"""
     title_lower = title.lower()
     bad_words = [
         'плейлист', 'playlist', 'mix', 'сборник', 'megamix', 'попурри',
@@ -46,8 +46,8 @@ def is_good_track(title):
             return False
     return True
 
-def search_youtube(query, max_results=30):
-    """Поиск треков с большим количеством результатов"""
+def search_youtube(query, max_results=50):
+    """Поиск треков"""
     ydl_opts = {'quiet': True, 'default_search': 'ytsearch', 'extract_flat': True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         search_query = f"ytsearch{max_results}:{query}"
@@ -64,19 +64,18 @@ def search_youtube(query, max_results=30):
                         duration = int(duration)
                     except:
                         duration = 0
-                    # Шире диапазон: 1.5 - 10 минут
                     if 90 <= duration <= 600 and is_good_track(title):
                         tracks.append({
                             'title': title,
                             'url': entry.get('url') or f"https://youtube.com/watch?v={entry.get('id')}",
                             'duration': duration
                         })
-                        if len(tracks) >= 20:
+                        if len(tracks) >= 50:
                             break
         return tracks
 
 def get_popular():
-    """Получает популярные треки из разных запросов"""
+    """Получает популярные треки"""
     global popular_cache
     if popular_cache:
         return popular_cache
@@ -95,10 +94,10 @@ def get_popular():
         for track in tracks:
             if not any(t['title'] == track['title'] for t in all_tracks):
                 all_tracks.append(track)
-        if len(all_tracks) >= 20:
+        if len(all_tracks) >= 30:
             break
     
-    popular_cache = all_tracks[:20]
+    popular_cache = all_tracks[:30]
     return popular_cache
 
 def download_audio(url, title):
@@ -124,18 +123,39 @@ def format_duration(seconds):
     except:
         return "00:00"
 
-def show_tracks(chat_id, tracks, title):
-    if not tracks:
-        bot.send_message(chat_id, "❌ Ничего не найдено. Попробуй другой запрос.")
+def show_tracks_page(chat_id, tracks, page, title, search_query=None):
+    """Показывает одну страницу с треками и кнопками навигации"""
+    per_page = 10
+    total_pages = (len(tracks) + per_page - 1) // per_page
+    start = page * per_page
+    end = min(start + per_page, len(tracks))
+    page_tracks = tracks[start:end]
+    
+    if not page_tracks:
         return
-    user_tracks[chat_id] = tracks
+    
+    # Кнопки с треками
     markup = types.InlineKeyboardMarkup(row_width=1)
-    for i, track in enumerate(tracks[:10]):
+    for i, track in enumerate(page_tracks):
         duration_str = format_duration(track.get('duration'))
         display_title = track['title'][:50]
+        # Сохраняем глобальный индекс трека
+        global_idx = start + i
         button_text = f"🎵 {display_title} [{duration_str}]"
-        markup.add(types.InlineKeyboardButton(text=button_text, callback_data=f"play_{i}"))
-    bot.send_message(chat_id, f"🎵 *{title}*", reply_markup=markup, parse_mode='Markdown')
+        markup.add(types.InlineKeyboardButton(text=button_text, callback_data=f"play_search_{global_idx}"))
+    
+    # Кнопки навигации
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"page_{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(types.InlineKeyboardButton("➡️ Далее", callback_data=f"page_{page+1}"))
+    
+    if nav_buttons:
+        markup.add(*nav_buttons)
+    
+    header = f"🎵 *{title}*\nСтраница {page+1}/{total_pages}"
+    bot.send_message(chat_id, header, reply_markup=markup, parse_mode='Markdown')
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -159,11 +179,20 @@ def process_search(message):
     if not is_subscribed(message.from_user.id):
         bot.send_message(message.chat.id, "⚠️ Сначала подпишись на канал!")
         return
+    
+    query = message.text
     wait = bot.send_message(message.chat.id, "🔎 *Ищу...*", parse_mode='Markdown')
-    tracks = search_youtube(message.text)
+    tracks = search_youtube(query)
+    
     if tracks:
+        # Сохраняем в кэш
+        search_cache[message.chat.id] = {
+            'tracks': tracks,
+            'current_page': 0,
+            'query': query
+        }
         bot.delete_message(message.chat.id, wait.message_id)
-        show_tracks(message.chat.id, tracks, f"Результаты: {message.text}")
+        show_tracks_page(message.chat.id, tracks, 0, f"Результаты: {query}", query)
     else:
         bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, wait.message_id)
 
@@ -175,8 +204,13 @@ def popular_button(message):
     wait = bot.send_message(message.chat.id, "🔎 *Загружаю популярное...*", parse_mode='Markdown')
     tracks = get_popular()
     if tracks:
+        search_cache[message.chat.id] = {
+            'tracks': tracks,
+            'current_page': 0,
+            'query': "Популярное"
+        }
         bot.delete_message(message.chat.id, wait.message_id)
-        show_tracks(message.chat.id, tracks, "🔥 Популярное")
+        show_tracks_page(message.chat.id, tracks, 0, "🔥 Популярное")
     else:
         bot.edit_message_text("❌ Не удалось загрузить популярное.", message.chat.id, wait.message_id)
 
@@ -199,14 +233,36 @@ def random_button(message):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {e}")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('play_'))
+# ========== ОБРАБОТКА НАВИГАЦИИ ==========
+@bot.callback_query_handler(func=lambda call: call.data.startswith('page_'))
+def handle_page(call):
+    page = int(call.data.split('_')[1])
+    cache = search_cache.get(call.message.chat.id)
+    if not cache:
+        bot.answer_callback_query(call.id, "❌ Результаты поиска устарели")
+        return
+    
+    tracks = cache['tracks']
+    title = cache['query']
+    
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    show_tracks_page(call.message.chat.id, tracks, page, f"Результаты: {title}", title)
+
+# ========== ОБРАБОТКА ВЫБОРА ТРЕКА ==========
+@bot.callback_query_handler(func=lambda call: call.data.startswith('play_search_'))
 def play_track(call):
-    idx = int(call.data.split('_')[1])
-    tracks = user_tracks.get(call.message.chat.id, [])
-    if idx >= len(tracks):
+    global_idx = int(call.data.split('_')[2])
+    cache = search_cache.get(call.message.chat.id)
+    if not cache:
+        bot.answer_callback_query(call.id, "❌ Результаты поиска устарели")
+        return
+    
+    tracks = cache['tracks']
+    if global_idx >= len(tracks):
         bot.answer_callback_query(call.id, "❌ Трек не найден")
         return
-    track = tracks[idx]
+    
+    track = tracks[global_idx]
     bot.answer_callback_query(call.id, f"⏳ Скачиваю...")
     status_msg = bot.send_message(call.message.chat.id, f"🎵 *{track['title']}*\n⏳ Скачивание...", parse_mode='Markdown')
     try:
