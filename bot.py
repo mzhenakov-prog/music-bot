@@ -54,8 +54,8 @@ def get_total_users():
 
 init_db()
 
-# ========== ТВОИ ТРЕКИ ==========
-TOP_TRACKS = [
+# ========== ПОПУЛЯРНЫЕ ТРЕКИ ==========
+POPULAR_TRACKS = [
     "SMS - UncleFlexxx", "Тону - HOLLYFLAME", "КУКЛА Remix 2026 - Дискотека Авария, VONAMOUR",
     "Плакала надежда - Jakone, Kiliana, Любовь Успенская", "NOBODY - Aarne, Toxi$, Big Baby Tape",
     "Гаснет свет - Nasty Babe", "КУПЕР - SQWOZ BAB", "БАНК - ICEGERGERT, Zivert",
@@ -72,28 +72,14 @@ TOP_TRACKS = [
     "Худи - Джиган, ARTIK & ASTI, NILETTO", "I Got Love - Miyagi & Эндшпиль feat. Рем Дигга"
 ]
 
-NEW_TRACKS = [
-    "Малиновое небо 2026 - Флит", "Мимолетно - лучиадежды", "Обман - Remixoviy, Batrai",
-    "Больше, чем ближе - NAVAI", "Как к себе домой LA LA LA LA - MOT",
-    "say something - Royel Otis", "Лепесточек - Честный", "ВАТ ИЗ ЛАВ - Junior",
-    "Ворона - Кэнни feat. MC Дымка", "Пропадает - 10AGE, Анет Сай",
-    "днями и ночами - BUSHIDO ZHO, Scally Milano, Полка", "Ла ла лэй - 9 Грамм",
-    "КУПЕР - SQWOZ BAB", "Тону - HOLLYFLAME", "SMS - UncleFlexxx"
-]
-
-# Хранилище для результатов
-user_data = {}  # {chat_id: {'tracks': [], 'title': '', 'page': 0}}
-
 # ========== КНОПКИ ==========
 def main_menu(is_admin=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     if is_admin:
-        markup.add("🎵 Поиск музыки", "🆕 Новинки")
-        markup.add("🔥 Топ 100", "🔗 Рефералка")
-        markup.add("❓ Помощь")
+        markup.add("🎵 Поиск музыки", "🔥 Популярное")
+        markup.add("🔗 Рефералка")
     else:
-        markup.add("🎵 Поиск музыки", "🆕 Новинки")
-        markup.add("🔥 Топ 100", "❓ Помощь")
+        markup.add("🎵 Поиск музыки", "🔥 Популярное")
     return markup
 
 # ========== ПОИСК НА YOUTUBE ==========
@@ -143,6 +129,8 @@ def format_time(seconds):
     return f"{m}:{s:02d}"
 
 # ========== ПОКАЗ СТРАНИЦЫ ==========
+user_data = {}
+
 def show_page(chat_id, page=0, per_page=10):
     data = user_data.get(chat_id)
     if not data or not data['tracks']:
@@ -161,7 +149,6 @@ def show_page(chat_id, page=0, per_page=10):
         duration = format_time(t.get('duration'))
         markup.add(types.InlineKeyboardButton(f"🎵 {t['title'][:45]} [{duration}]", callback_data=f"play_{idx}"))
     
-    # Кнопки навигации
     nav = []
     if page > 0:
         nav.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"page_{page-1}"))
@@ -189,7 +176,7 @@ def start(message):
     add_user(user_id, username, referrer)
     
     is_admin = (user_id == ADMIN_ID)
-    bot.send_message(message.chat.id, "🎵 *Музыкальный бот готов!*", reply_markup=main_menu(is_admin), parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🎵 *Музыкальный бот готов!*\n\nИспользуй кнопки внизу.", reply_markup=main_menu(is_admin), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "🎵 Поиск музыки")
 def search_cmd(message):
@@ -211,22 +198,12 @@ def do_search(message):
     else:
         bot.edit_message_text("❌ Ничего не найдено. Попробуй другой запрос.", message.chat.id, msg.message_id, parse_mode='Markdown')
 
-@bot.message_handler(func=lambda msg: msg.text == "🆕 Новинки")
-def new_cmd(message):
-    tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in NEW_TRACKS]
+@bot.message_handler(func=lambda msg: msg.text == "🔥 Популярное")
+def popular_cmd(message):
+    tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in POPULAR_TRACKS]
     user_data[message.chat.id] = {
         'tracks': tracks,
-        'title': "🆕 Новинки",
-        'page': 0
-    }
-    show_page(message.chat.id, 0)
-
-@bot.message_handler(func=lambda msg: msg.text == "🔥 Топ 100")
-def top_cmd(message):
-    tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in TOP_TRACKS]
-    user_data[message.chat.id] = {
-        'tracks': tracks,
-        'title': "🔥 Топ 100",
+        'title': "🔥 Популярное",
         'page': 0
     }
     show_page(message.chat.id, 0)
@@ -250,20 +227,6 @@ def ref_cmd(message):
 • Всего пользователей: {total_users}"""
     
     bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
-
-@bot.message_handler(func=lambda msg: msg.text == "❓ Помощь")
-def help_cmd(message):
-    help_text = """🎵 *Музыкальный бот*
-
-🔍 *Поиск* — найди любую песню
-🆕 *Новинки* — свежие треки
-🔥 *Топ 100* — популярное
-
-*Как искать:*
-Просто напиши название песни или исполнителя
-
-@avgustc"""
-    bot.send_message(message.chat.id, help_text, reply_markup=main_menu(message.from_user.id == ADMIN_ID), parse_mode='Markdown')
 
 # ========== НАВИГАЦИЯ ==========
 @bot.callback_query_handler(func=lambda call: call.data.startswith('page_'))
@@ -297,7 +260,7 @@ def play_track(call):
     msg = bot.send_message(call.message.chat.id, f"🎵 *{track['title']}*\n⏳ Скачивание...", parse_mode='Markdown')
     
     try:
-        # Для треков из списка нужно выполнить поиск
+        # Если трек из списка популярного — ищем на YouTube
         if 'youtube.com' not in track['url']:
             search_result = search_youtube(track['title'], max_results=1)
             if search_result:
