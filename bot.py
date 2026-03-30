@@ -10,7 +10,7 @@ from datetime import datetime
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
-ADMIN_ID = 405071693  # 👈 ТВОЙ TELEGRAM ID
+ADMIN_ID = 405071693
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ========== БАЗА ДАННЫХ ==========
@@ -81,6 +81,9 @@ NEW_TRACKS = [
     "КУПЕР - SQWOZ BAB", "Тону - HOLLYFLAME", "SMS - UncleFlexxx"
 ]
 
+# Хранилище для результатов поиска
+user_search_results = {}  # {chat_id: {'tracks': [], 'page': 0, 'type': 'search'}}
+
 # ========== КНОПКИ ==========
 def main_menu(is_admin=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -93,21 +96,33 @@ def main_menu(is_admin=False):
         markup.add("🔥 Топ 100", "❓ Помощь")
     return markup
 
-# ========== ПОИСК И СКАЧИВАНИЕ ==========
+# ========== ПОИСК НА YOUTUBE ==========
 def search_youtube(query):
-    ydl_opts = {'quiet': True, 'default_search': 'ytsearch5', 'extract_flat': True}
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(query, download=False)
-        tracks = []
-        if 'entries' in info:
-            for entry in info['entries'][:5]:
-                if entry:
-                    tracks.append({
-                        'title': entry.get('title', 'Unknown'),
-                        'url': entry.get('url') or f"https://youtube.com/watch?v={entry.get('id')}",
-                        'duration': entry.get('duration', 0)
-                    })
-        return tracks
+    ydl_opts = {
+        'quiet': True,
+        'default_search': 'ytsearch10',
+        'extract_flat': True,
+        'format': 'bestaudio/best',
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            search_query = f"ytsearch10:{query}"
+            info = ydl.extract_info(search_query, download=False)
+            tracks = []
+            if 'entries' in info:
+                for entry in info['entries']:
+                    if entry:
+                        duration = entry.get('duration', 0)
+                        if duration and 60 <= duration <= 600:
+                            tracks.append({
+                                'title': entry.get('title', 'Unknown'),
+                                'url': entry.get('url') or f"https://youtube.com/watch?v={entry.get('id')}",
+                                'duration': duration
+                            })
+            return tracks[:10]
+    except Exception as e:
+        print(f"Ошибка поиска: {e}")
+        return []
 
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
@@ -127,19 +142,34 @@ def format_time(seconds):
     s = int(seconds) % 60
     return f"{m}:{s:02d}"
 
-# ========== ОТОБРАЖЕНИЕ ТРЕКОВ ==========
-user_tracks = {}
-
-def show_tracks(chat_id, tracks, title):
+# ========== ОТОБРАЖЕНИЕ ТРЕКОВ С ПАГИНАЦИЕЙ ==========
+def show_tracks_page(chat_id, tracks, title, page=0, per_page=10):
     if not tracks:
         bot.send_message(chat_id, "❌ Ничего не найдено.")
         return
-    user_tracks[chat_id] = tracks
+    
+    total_pages = (len(tracks) + per_page - 1) // per_page
+    start = page * per_page
+    end = min(start + per_page, len(tracks))
+    page_tracks = tracks[start:end]
+    
     markup = types.InlineKeyboardMarkup(row_width=1)
-    for i, t in enumerate(tracks):
+    for i, t in enumerate(page_tracks):
+        idx = start + i
         duration = format_time(t.get('duration'))
-        markup.add(types.InlineKeyboardButton(f"🎵 {t['title'][:45]} [{duration}]", callback_data=f"play_{i}"))
-    bot.send_message(chat_id, f"🎵 *{title}*", reply_markup=markup, parse_mode='Markdown')
+        markup.add(types.InlineKeyboardButton(f"🎵 {t['title'][:45]} [{duration}]", callback_data=f"play_{idx}"))
+    
+    # Кнопки навигации
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"page_{title}_{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(types.InlineKeyboardButton("➡️ Далее", callback_data=f"page_{title}_{page+1}"))
+    if nav_buttons:
+        markup.add(*nav_buttons)
+    
+    bot.send_message(chat_id, f"🎵 *{title}* (стр. {page+1}/{total_pages})", reply_markup=markup, parse_mode='Markdown')
+    return tracks
 
 # ========== КОМАНДЫ ==========
 @bot.message_handler(commands=['start'])
@@ -162,27 +192,31 @@ def start(message):
 
 @bot.message_handler(func=lambda msg: msg.text == "🎵 Поиск музыки")
 def search_cmd(message):
-    bot.send_message(message.chat.id, "🔍 *Напиши название песни*", parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🔍 *Напиши название песни или исполнителя*", parse_mode='Markdown')
     bot.register_next_step_handler(message, do_search)
 
 def do_search(message):
     msg = bot.send_message(message.chat.id, "🔎 *Ищу...*", parse_mode='Markdown')
     tracks = search_youtube(message.text)
+    
     if tracks:
         bot.delete_message(message.chat.id, msg.message_id)
-        show_tracks(message.chat.id, tracks, f"Результаты: {message.text}")
+        user_search_results[message.chat.id] = {'tracks': tracks, 'type': 'search'}
+        show_tracks_page(message.chat.id, tracks, f"Результаты: {message.text}", 0, 10)
     else:
-        bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, msg.message_id, parse_mode='Markdown')
+        bot.edit_message_text("❌ Ничего не найдено. Попробуй другой запрос.", message.chat.id, msg.message_id, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "🆕 Новинки")
 def new_cmd(message):
     tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in NEW_TRACKS]
-    show_tracks(message.chat.id, tracks, "🆕 Новинки")
+    user_search_results[message.chat.id] = {'tracks': tracks, 'type': 'new'}
+    show_tracks_page(message.chat.id, tracks, "🆕 Новинки", 0, 10)
 
 @bot.message_handler(func=lambda msg: msg.text == "🔥 Топ 100")
 def top_cmd(message):
     tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in TOP_TRACKS]
-    show_tracks(message.chat.id, tracks, "🔥 Топ 100")
+    user_search_results[message.chat.id] = {'tracks': tracks, 'type': 'top'}
+    show_tracks_page(message.chat.id, tracks, "🔥 Топ 100", 0, 10)
 
 @bot.message_handler(func=lambda msg: msg.text == "🔗 Рефералка")
 def ref_cmd(message):
@@ -208,24 +242,58 @@ def ref_cmd(message):
 def help_cmd(message):
     help_text = """🎵 *Музыкальный бот*
 
-🔍 Поиск — найди любую песню
-🆕 Новинки — свежие треки
-🔥 Топ 100 — популярное
+🔍 *Поиск* — найди любую песню
+🆕 *Новинки* — свежие треки
+🔥 *Топ 100* — популярное
+
+*Как искать:*
+Просто напиши название песни или исполнителя
 
 @avgustc"""
     bot.send_message(message.chat.id, help_text, reply_markup=main_menu(message.from_user.id == ADMIN_ID), parse_mode='Markdown')
 
+# ========== НАВИГАЦИЯ ПО СТРАНИЦАМ ==========
+@bot.callback_query_handler(func=lambda call: call.data.startswith('page_'))
+def handle_page(call):
+    _, track_type, page = call.data.split('_')
+    page = int(page)
+    
+    data = user_search_results.get(call.message.chat.id)
+    if not data:
+        bot.answer_callback_query(call.id, "❌ Результаты поиска устарели")
+        return
+    
+    tracks = data['tracks']
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    show_tracks_page(call.message.chat.id, tracks, track_type, page, 10)
+
+# ========== СКАЧИВАНИЕ ТРЕКА ==========
 @bot.callback_query_handler(func=lambda call: call.data.startswith('play_'))
 def play_track(call):
     idx = int(call.data.split('_')[1])
-    tracks = user_tracks.get(call.message.chat.id, [])
+    data = user_search_results.get(call.message.chat.id)
+    if not data:
+        bot.answer_callback_query(call.id, "❌ Результаты поиска устарели")
+        return
+    
+    tracks = data['tracks']
     if idx >= len(tracks):
         bot.answer_callback_query(call.id, "❌ Трек не найден")
         return
+    
     track = tracks[idx]
     bot.answer_callback_query(call.id, "⏳ Скачиваю...")
     msg = bot.send_message(call.message.chat.id, f"🎵 *{track['title']}*\n⏳ Скачивание...", parse_mode='Markdown')
+    
     try:
+        # Для треков из списка нужно выполнить поиск
+        if 'youtube.com' not in track['url']:
+            search_result = search_youtube(track['title'])
+            if search_result:
+                track = search_result[0]
+            else:
+                raise Exception("Трек не найден на YouTube")
+        
         file = download_audio(track['url'], track['title'])
         with open(file, 'rb') as f:
             bot.send_audio(call.message.chat.id, f, title=track['title'])
