@@ -3,6 +3,14 @@ from telebot import types
 import yt_dlp
 import os
 import re
+import subprocess
+
+# Пытаемся обновить yt-dlp при запуске
+try:
+    subprocess.run(['pip', 'install', '--upgrade', 'yt-dlp'], capture_output=True)
+    print("✅ yt-dlp обновлён")
+except:
+    print("⚠️ Не удалось обновить yt-dlp")
 
 TG_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 CHANNEL_ID = '-1001888094511'
@@ -44,17 +52,16 @@ def search_youtube(query):
         return tracks
 
 def download_audio(url, title):
-    """Скачивает аудио без конвертации (OGG/M4A) — FFmpeg не нужен"""
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
     opts = {
-        'format': 'bestaudio/best',  # Скачиваем в лучшем качестве без конвертации
+        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
         'outtmpl': f'/tmp/{safe_title}.%(ext)s',
         'quiet': True,
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
-        return filename  # Возвращаем как есть (OGG, M4A, WEBM)
+        return filename
 
 def show_tracks(chat_id, tracks, title):
     if not tracks:
@@ -152,5 +159,5 @@ def check_callback(call):
         bot.answer_callback_query(call.id, "❌ Вы ещё не подписаны!", show_alert=True)
 
 if __name__ == '__main__':
-    print("🎵 Музыкальный бот запущен (без FFmpeg)!")
+    print("🎵 Музыкальный бот запущен!")
     bot.polling(none_stop=True)
