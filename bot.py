@@ -81,7 +81,7 @@ NEW_TRACKS = [
     "КУПЕР - SQWOZ BAB", "Тону - HOLLYFLAME", "SMS - UncleFlexxx"
 ]
 
-# ========== КНОПКИ (разные для админа и пользователей) ==========
+# ========== КНОПКИ ==========
 def main_menu(is_admin=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     if is_admin:
@@ -147,7 +147,6 @@ def start(message):
     user_id = message.from_user.id
     username = message.from_user.username
     
-    # Реферальная ссылка
     args = message.text.split()
     referrer = None
     if len(args) > 1 and args[1].startswith('ref_'):
@@ -159,11 +158,11 @@ def start(message):
     add_user(user_id, username, referrer)
     
     is_admin = (user_id == ADMIN_ID)
-    bot.send_message(message.chat.id, "🎵 *Музыкальный бот готов!*\n\nИспользуй кнопки внизу.", reply_markup=main_menu(is_admin), parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🎵 *Музыкальный бот готов!*", reply_markup=main_menu(is_admin), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "🎵 Поиск музыки")
 def search_cmd(message):
-    bot.send_message(message.chat.id, "🔍 *Напиши название песни или исполнителя*", parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🔍 *Напиши название песни*", parse_mode='Markdown')
     bot.register_next_step_handler(message, do_search)
 
 def do_search(message):
@@ -177,35 +176,31 @@ def do_search(message):
 
 @bot.message_handler(func=lambda msg: msg.text == "🆕 Новинки")
 def new_cmd(message):
-    tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in NEW_TRACKS[:15]]
+    tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in NEW_TRACKS]
     show_tracks(message.chat.id, tracks, "🆕 Новинки")
 
 @bot.message_handler(func=lambda msg: msg.text == "🔥 Топ 100")
 def top_cmd(message):
-    tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in TOP_TRACKS[:30]]
+    tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in TOP_TRACKS]
     show_tracks(message.chat.id, tracks, "🔥 Топ 100")
 
 @bot.message_handler(func=lambda msg: msg.text == "🔗 Рефералка")
 def ref_cmd(message):
     if message.from_user.id != ADMIN_ID:
-        bot.send_message(message.chat.id, "❌ Эта кнопка только для создателя бота.")
+        bot.send_message(message.chat.id, "❌ Только для создателя.")
         return
     
-    user_id = message.from_user.id
-    ref_count = get_ref_stats(user_id)
+    ref_count = get_ref_stats(ADMIN_ID)
     total_users = get_total_users()
+    ref_link = f"https://t.me/твой_бот?start=ref_{ADMIN_ID}"
     
-    ref_link = f"https://t.me/твой_бот?start=ref_{user_id}"
-    
-    text = f"""🔗 *Реферальная система*
+    text = f"""🔗 *Реферальная ссылка*
 
-Твоя ссылка: `{ref_link}`
+`{ref_link}`
 
 📊 *Статистика:*
-• Приглашено: {ref_count} чел.
-• Всего пользователей: {total_users} чел.
-
-Отправляй ссылку друзьям — они заходят в бота, а ты видишь статистику!"""
+• Приглашено: {ref_count}
+• Всего пользователей: {total_users}"""
     
     bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
 
@@ -213,12 +208,11 @@ def ref_cmd(message):
 def help_cmd(message):
     help_text = """🎵 *Музыкальный бот*
 
-*Как пользоваться:*
-• Нажми 🔍 Поиск и введи название
-• Нажми 🆕 Новинки — свежие треки
-• Нажми 🔥 Топ 100 — популярные треки
+🔍 Поиск — найди любую песню
+🆕 Новинки — свежие треки
+🔥 Топ 100 — популярное
 
-*По вопросам:* @avgustc"""
+@avgustc"""
     bot.send_message(message.chat.id, help_text, reply_markup=main_menu(message.from_user.id == ADMIN_ID), parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('play_'))
@@ -229,7 +223,7 @@ def play_track(call):
         bot.answer_callback_query(call.id, "❌ Трек не найден")
         return
     track = tracks[idx]
-    bot.answer_callback_query(call.id, f"⏳ Скачиваю...")
+    bot.answer_callback_query(call.id, "⏳ Скачиваю...")
     msg = bot.send_message(call.message.chat.id, f"🎵 *{track['title']}*\n⏳ Скачивание...", parse_mode='Markdown')
     try:
         file = download_audio(track['url'], track['title'])
@@ -240,7 +234,6 @@ def play_track(call):
     except Exception as e:
         bot.edit_message_text(f"❌ Ошибка: {e}", call.message.chat.id, msg.message_id, parse_mode='Markdown')
 
-# ========== ЗАПУСК ==========
 if __name__ == '__main__':
     print("🎵 Музыкальный бот запущен!")
     bot.polling(none_stop=True)
