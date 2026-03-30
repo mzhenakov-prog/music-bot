@@ -5,12 +5,11 @@ import os
 import re
 import subprocess
 
-# Пытаемся обновить yt-dlp при запуске
+# Обновляем yt-dlp
 try:
     subprocess.run(['pip', 'install', '--upgrade', 'yt-dlp'], capture_output=True)
-    print("✅ yt-dlp обновлён")
 except:
-    print("⚠️ Не удалось обновить yt-dlp")
+    pass
 
 TG_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 CHANNEL_ID = '-1001888094511'
@@ -32,23 +31,53 @@ def is_subscribed(user_id):
     except:
         return False
 
-def search_youtube(query):
+def is_single_track(title):
+    """Проверяет, что это не плейлист и не сборник"""
+    title_lower = title.lower()
+    
+    # Слова-маркеры плейлистов и сборников
+    bad_words = [
+        'плейлист', 'playlist', 'mix', 'микс', 'сборник', 'хиты', 'top', 'best',
+        'попурри', 'megamix', 'mashup', 'remix', 'live', 'концерт', 'альбом'
+    ]
+    
+    for word in bad_words:
+        if word in title_lower:
+            return False
+    
+    # Исключаем слишком короткие или слишком длинные названия
+    if len(title) < 5 or len(title) > 150:
+        return False
+    
+    return True
+
+def search_youtube(query, max_results=15):
+    """Поиск треков с фильтрацией"""
     ydl_opts = {
         'quiet': True,
-        'default_search': 'ytsearch10',
+        'default_search': 'ytsearch',
         'extract_flat': True,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        search_query = f"ytsearch10:{query}"
+        search_query = f"ytsearch{max_results}:{query}"
         info = ydl.extract_info(search_query, download=False)
         tracks = []
         if 'entries' in info:
             for entry in info['entries']:
                 if entry:
-                    tracks.append({
-                        'title': entry.get('title', 'Unknown'),
-                        'url': entry.get('url') or f"https://youtube.com/watch?v={entry.get('id')}",
-                    })
+                    title = entry.get('title', 'Unknown')
+                    duration = entry.get('duration', 0)
+                    
+                    # Фильтрация: длительность от 90 сек до 600 сек (1.5 - 10 минут)
+                    # и проверка, что это не плейлист
+                    if 90 <= duration <= 600 and is_single_track(title):
+                        tracks.append({
+                            'title': title,
+                            'url': entry.get('url') or f"https://youtube.com/watch?v={entry.get('id')}",
+                            'duration': duration
+                        })
+                        if len(tracks) >= 10:  # Ограничиваем 10 треками
+                            break
         return tracks
 
 def download_audio(url, title):
@@ -65,14 +94,18 @@ def download_audio(url, title):
 
 def show_tracks(chat_id, tracks, title):
     if not tracks:
-        bot.send_message(chat_id, "❌ Ничего не найдено.")
+        bot.send_message(chat_id, "❌ Ничего не найдено. Попробуй другой запрос.")
         return
     user_tracks[chat_id] = tracks
     markup = types.InlineKeyboardMarkup(row_width=1)
     for i, track in enumerate(tracks[:10]):
-        button_text = f"🎵 {track['title'][:50]}"
+        duration = track.get('duration', 0)
+        minutes = duration // 60
+        seconds = duration % 60
+        time_str = f"{minutes}:{seconds:02d}"
+        button_text = f"🎵 {track['title'][:45]} [{time_str}]"
         markup.add(types.InlineKeyboardButton(text=button_text, callback_data=f"play_{i}"))
-    bot.send_message(chat_id, f"🎵 *{title}*", reply_markup=markup, parse_mode='Markdown')
+    bot.send_message(chat_id, f"🎵 *{title}*\n(треки 1.5-10 мин, без плейлистов)", reply_markup=markup, parse_mode='Markdown')
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -80,16 +113,16 @@ def start(message):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Подписаться на канал", url=CHANNEL_URL))
         markup.add(types.InlineKeyboardButton("✅ Я подписался", callback_data="check_sub"))
-        bot.send_message(message.chat.id, "⚠️ *Доступ закрыт!*\n\nПодпишись на канал.", reply_markup=markup, parse_mode='Markdown')
+        bot.send_message(message.chat.id, "⚠️ *Доступ закрыт!*\n\nПодпишись на канал, чтобы слушать музыку.", reply_markup=markup, parse_mode='Markdown')
     else:
-        bot.send_message(message.chat.id, "🎵 *Муз-бот готов!*", reply_markup=main_menu(), parse_mode='Markdown')
+        bot.send_message(message.chat.id, "🎵 *Муз-бот готов!*\n\nИспользуй кнопки внизу.", reply_markup=main_menu(), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "🎵 Поиск музыки")
 def search_button(message):
     if not is_subscribed(message.from_user.id):
         bot.send_message(message.chat.id, "⚠️ Сначала подпишись на канал!")
         return
-    bot.send_message(message.chat.id, "🔍 *Напиши название песни*", parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🔍 *Напиши название песни или исполнителя*", parse_mode='Markdown')
     bot.register_next_step_handler(message, process_search)
 
 def process_search(message):
@@ -102,7 +135,7 @@ def process_search(message):
         bot.delete_message(message.chat.id, wait.message_id)
         show_tracks(message.chat.id, tracks, f"Результаты: {message.text}")
     else:
-        bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, wait.message_id)
+        bot.edit_message_text("❌ Ничего не найдено. Попробуй уточнить запрос.", message.chat.id, wait.message_id)
 
 @bot.message_handler(func=lambda msg: msg.text == "🆕 Новинки")
 def new_button(message):
@@ -110,10 +143,10 @@ def new_button(message):
         bot.send_message(message.chat.id, "⚠️ Сначала подпишись на канал!")
         return
     wait = bot.send_message(message.chat.id, "🔎 *Загружаю новинки...*", parse_mode='Markdown')
-    tracks = search_youtube("новинки российской музыки")
+    tracks = search_youtube("новинки музыки 2026 российская")
     if tracks:
         bot.delete_message(message.chat.id, wait.message_id)
-        show_tracks(message.chat.id, tracks, "🆕 Новинки")
+        show_tracks(message.chat.id, tracks, "🆕 Новинки российской музыки")
     else:
         bot.edit_message_text("❌ Не удалось загрузить новинки.", message.chat.id, wait.message_id)
 
