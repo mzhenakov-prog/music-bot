@@ -10,7 +10,7 @@ from datetime import datetime
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
-ADMIN_ID = 5298604296  # 👈 ТВОЙ TELEGRAM ID (проверь через @userinfobot)
+ADMIN_ID = 5298604296  # 👈 ТВОЙ ID
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ========== БАЗА ДАННЫХ ==========
@@ -105,7 +105,6 @@ def search_youtube(query, max_results=30):
         print(f"Ошибка поиска: {e}")
         return []
 
-# ========== СКАЧИВАНИЕ АУДИО (ИСПРАВЛЕННОЕ) ==========
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
     opts = {
@@ -118,17 +117,22 @@ def download_audio(url, title):
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
+            if info is None:
+                raise Exception("Нет данных")
+            
+            # Ищем скачанный файл
+            base = f'/tmp/{safe_title}'
+            for ext in ['.mp3', '.m4a', '.webm', '.opus']:
+                if os.path.exists(base + ext):
+                    return base + ext
+            
             filename = ydl.prepare_filename(info)
-            if not os.path.exists(filename):
-                # Пробуем найти любой скачанный файл
-                base = filename.rsplit('.', 1)[0]
-                for f in os.listdir('/tmp'):
-                    if f.startswith(safe_title):
-                        return f'/tmp/{f}'
-            return filename
+            if os.path.exists(filename):
+                return filename
+            
+            raise Exception("Файл не найден")
     except Exception as e:
-        print(f"Ошибка скачивания: {e}")
-        # Запасной вариант: только лучший аудио
+        print(f"Ошибка: {e}")
         opts['format'] = 'bestaudio/best'
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -275,7 +279,6 @@ def play_track(call):
     msg = bot.send_message(call.message.chat.id, f"🎵 *{track['title']}*\n⏳ Скачивание...", parse_mode='Markdown')
     
     try:
-        # Если трек из списка популярного — ищем на YouTube
         if 'youtube.com' not in track['url']:
             search_result = search_youtube(track['title'], max_results=1)
             if search_result:
@@ -284,9 +287,6 @@ def play_track(call):
                 raise Exception("Трек не найден на YouTube")
         
         file = download_audio(track['url'], track['title'])
-        if not os.path.exists(file):
-            raise Exception("Файл не скачался")
-            
         with open(file, 'rb') as f:
             bot.send_audio(call.message.chat.id, f, title=track['title'])
         os.remove(file)
