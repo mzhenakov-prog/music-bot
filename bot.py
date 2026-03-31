@@ -7,6 +7,7 @@ import random
 import time
 import sqlite3
 from datetime import datetime
+from pytubefix import YouTube
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
@@ -164,7 +165,7 @@ def search_youtube(query, max_results=50):
                         if duration and 60 <= duration <= 360 and is_good_track(title):
                             tracks.append({
                                 'title': title,
-                                'url': entry.get('url') or f"https://youtube.com/watch?v={entry.get('id')}",
+                                'url': f"https://youtube.com/watch?v={entry.get('id')}",
                                 'duration': duration
                             })
             return tracks
@@ -172,36 +173,19 @@ def search_youtube(query, max_results=50):
         print(f"Ошибка поиска: {e}")
         return []
 
-# ========== СКАЧИВАНИЕ (исправленное) ==========
+# ========== СКАЧИВАНИЕ (через pytubefix) ==========
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
-    opts = {
-        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
-        'outtmpl': f'/tmp/{safe_title}.%(ext)s',
-        'quiet': True,
-        'ignoreerrors': True,
-        'no_warnings': True,
-    }
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if not info:
-                raise Exception("Нет данных")
-            
-            filename = ydl.prepare_filename(info)
-            if not os.path.exists(filename):
-                base = filename.rsplit('.', 1)[0]
-                for ext in ['.mp3', '.m4a', '.webm']:
-                    if os.path.exists(base + ext):
-                        return base + ext
-            return filename
+        yt = YouTube(url)
+        stream = yt.streams.filter(only_audio=True).first()
+        if not stream:
+            raise Exception("Аудио не найдено")
+        file = stream.download(output_path='/tmp', filename=f'{safe_title}.mp4')
+        return file
     except Exception as e:
-        print(f"Ошибка: {e}")
-        # Запасной вариант
-        opts['format'] = 'bestaudio/best'
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            return ydl.prepare_filename(info)
+        print(f"Ошибка pytubefix: {e}")
+        raise Exception(f"Не удалось скачать: {e}")
 
 def format_time(seconds):
     if not seconds:
@@ -210,7 +194,7 @@ def format_time(seconds):
     s = int(seconds) % 60
     return f"{m}:{s:02d}"
 
-# ========== ПОКАЗ ТРЕКОВ (с пагинацией) ==========
+# ========== ПОКАЗ ТРЕКОВ ==========
 user_tracks = {}
 
 def show_tracks(chat_id, tracks, title, page=0, per_page=10):
@@ -229,7 +213,6 @@ def show_tracks(chat_id, tracks, title, page=0, per_page=10):
         duration = format_time(t.get('duration'))
         markup.add(types.InlineKeyboardButton(f"🎵 {t['title'][:45]} [{duration}]", callback_data=f"play_{idx}"))
     
-    # Кнопки навигации
     nav = []
     if page > 0:
         nav.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"page_{title}_{page-1}"))
