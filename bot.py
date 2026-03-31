@@ -11,7 +11,7 @@ from datetime import datetime
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 ADMIN_ID = 5298604296
-BOT_USERNAME = 'muz_super_music_bot'  # 👈 ЗАМЕНИ НА USERNAME БОТА (без @)
+BOT_USERNAME = 'reservettbot'
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ========== БАЗА ДАННЫХ ==========
@@ -60,10 +60,25 @@ def get_ref_links(created_by):
     conn.close()
     return links
 
+def get_ref_link_by_code(code):
+    conn = sqlite3.connect('music_bot.db')
+    c = conn.cursor()
+    c.execute("SELECT id, code, user_id, created_at, clicks FROM ref_links WHERE code = ?", (code,))
+    link = c.fetchone()
+    conn.close()
+    return link
+
 def click_ref_link(code):
     conn = sqlite3.connect('music_bot.db')
     c = conn.cursor()
     c.execute("UPDATE ref_links SET clicks = clicks + 1 WHERE code = ?", (code,))
+    conn.commit()
+    conn.close()
+
+def delete_ref_link(code):
+    conn = sqlite3.connect('music_bot.db')
+    c = conn.cursor()
+    c.execute("DELETE FROM ref_links WHERE code = ?", (code,))
     conn.commit()
     conn.close()
 
@@ -85,7 +100,7 @@ def get_total_users():
 
 init_db()
 
-# ========== НОВИНКИ ==========
+# ========== НОВИНКИ (твои треки) ==========
 NEW_TRACKS = [
     "SMS - UncleFlexxx", "Тону - HOLLYFLAME", "КУКЛА Remix 2026 - Дискотека Авария, VONAMOUR",
     "Плакала надежда - Jakone, Kiliana, Любовь Успенская", "NOBODY - Aarne, Toxi$, Big Baby Tape",
@@ -102,6 +117,17 @@ NEW_TRACKS = [
     "Шутка - Akmal', Григорий Лепс", "Внутренний голос - Jeny Vesna", "Карта битая - Kiliana",
     "Худи - Джиган, ARTIK & ASTI, NILETTO", "I Got Love - Miyagi & Эндшпиль feat. Рем Дигга"
 ]
+
+# ========== ФИЛЬТР ДЛЯ ПОИСКА ==========
+BAD_WORDS = ['плейлист', 'playlist', 'mix', 'сборник', 'хиты', 'top', 'best', 'megamix', 'mashup', 'live', 'концерт']
+
+def is_good_track(title):
+    """Проверяет, что трек не плейлист и не сборник"""
+    title_lower = title.lower()
+    for word in BAD_WORDS:
+        if word in title_lower:
+            return False
+    return True
 
 # ========== КНОПКИ ==========
 def main_menu(is_admin=False):
@@ -121,7 +147,7 @@ def ref_menu():
     return markup
 
 # ========== ПОИСК НА YOUTUBE ==========
-def search_youtube(query, max_results=10):
+def search_youtube(query, max_results=50):
     ydl_opts = {
         'quiet': True,
         'default_search': 'ytsearch',
@@ -137,7 +163,8 @@ def search_youtube(query, max_results=10):
                     if entry:
                         title = entry.get('title', 'Unknown')
                         duration = entry.get('duration', 0)
-                        if duration and 60 <= duration <= 360:
+                        # Фильтр: 1-6 минут, не плейлист
+                        if duration and 60 <= duration <= 360 and is_good_track(title):
                             tracks.append({
                                 'title': title,
                                 'url': entry.get('url') or f"https://youtube.com/watch?v={entry.get('id')}",
@@ -157,6 +184,7 @@ def download_audio(url, title):
         'quiet': True,
         'ignoreerrors': True,
         'no_warnings': True,
+        'extract_flat': False,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -173,6 +201,7 @@ def download_audio(url, title):
             return filename
     except Exception as e:
         print(f"Ошибка: {e}")
+        # Запасной вариант
         opts['format'] = 'bestaudio/best'
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -226,7 +255,11 @@ def start(message):
     referrer = None
     if len(args) > 1 and args[1].startswith('ref_'):
         try:
-            referrer = int(args[1].split('_')[1])
+            code = args[1]
+            link = get_ref_link_by_code(code)
+            if link:
+                click_ref_link(code)
+                referrer = link[2]
         except:
             pass
     
@@ -280,48 +313,109 @@ def process_create_ref(message):
         
         text = f"""✅ *Реферальная ссылка создана!*
 
-👤 Для пользователя: `{user_id}`
 🔗 Ссылка: `{ref_link}`
 
-📊 *Отслеживание:*
-Переходы по этой ссылке будут отображаться в разделе "Мои ссылки"."""
+👤 Для пользователя: `{user_id}`"""
         
         bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
     except:
-        bot.send_message(message.chat.id, "❌ Неверный ID. Попробуй ещё раз.", reply_markup=main_menu(True))
+        bot.send_message(message.chat.id, "❌ Неверный ID.", reply_markup=main_menu(True))
 
 @bot.callback_query_handler(func=lambda call: call.data == "my_refs")
 def my_refs(call):
     links = get_ref_links(ADMIN_ID)
     
     if not links:
-        bot.send_message(call.message.chat.id, "📭 *У тебя пока нет созданных ссылок*", reply_markup=ref_menu(), parse_mode='Markdown')
+        bot.send_message(call.message.chat.id, "📭 *Нет созданных ссылок*", reply_markup=ref_menu(), parse_mode='Markdown')
         return
     
-    text = "🔗 *Твои реферальные ссылки:*\n\n"
-    for link in links[:10]:  # показываем последние 10
-        text += f"📌 `ref_{link[3]}` — переходов: {link[4]}\n"
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for link in links:
+        code = link[1]
+        suffix = code.split('_')[2] if '_' in code else code
+        markup.add(types.InlineKeyboardButton(f"📊 {suffix} — {link[4]} переходов", callback_data=f"link_{code}"))
     
-    bot.send_message(call.message.chat.id, text, reply_markup=ref_menu(), parse_mode='Markdown')
+    bot.send_message(call.message.chat.id, "🔗 *Твои реферальные ссылки:*", reply_markup=markup, parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('link_'))
+def show_link_stats(call):
+    code = call.data.split('_', 1)[1]
+    link = get_ref_link_by_code(code)
+    
+    if not link:
+        bot.answer_callback_query(call.id, "❌ Ссылка не найдена")
+        return
+    
+    bot_username = bot.get_me().username
+    ref_link = f"https://t.me/{bot_username}?start={code}"
+    suffix = code.split('_')[2] if '_' in code else code
+    
+    text = f"""📊 *Статистика ссылки*
+
+🔗 `{ref_link}`
+
+👨‍💻 *Переходы*
+Всего: {link[4]}
+
+🗑 `/dellink_{suffix}` — удалить"""
+    
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_{code}"))
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data="my_refs"))
+    
+    bot.send_message(call.message.chat.id, text, reply_markup=markup, parse_mode='Markdown')
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('delete_'))
+def delete_link(call):
+    code = call.data.split('_', 1)[1]
+    delete_ref_link(code)
+    bot.answer_callback_query(call.id, "✅ Ссылка удалена!")
+    bot.edit_message_text("🗑 Ссылка удалена", call.message.chat.id, call.message.message_id)
+    
+    links = get_ref_links(ADMIN_ID)
+    if links:
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for link in links:
+            code = link[1]
+            suffix = code.split('_')[2] if '_' in code else code
+            markup.add(types.InlineKeyboardButton(f"📊 {suffix} — {link[4]} переходов", callback_data=f"link_{code}"))
+        bot.send_message(call.message.chat.id, "🔗 *Обновлённый список:*", reply_markup=markup, parse_mode='Markdown')
+
+@bot.message_handler(commands=['dellink'])
+def del_link_command(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    args = message.text.split()
+    if len(args) < 2:
+        bot.send_message(message.chat.id, "❌ Используй: `/dellink_название`", parse_mode='Markdown')
+        return
+    
+    suffix = args[0].replace('/dellink_', '')
+    links = get_ref_links(ADMIN_ID)
+    for link in links:
+        code = link[1]
+        if code.endswith(suffix):
+            delete_ref_link(code)
+            bot.send_message(message.chat.id, f"✅ Ссылка удалена!", parse_mode='Markdown')
+            return
+    
+    bot.send_message(message.chat.id, "❌ Ссылка не найдена")
 
 @bot.message_handler(func=lambda msg: msg.text == "❓ Помощь")
 def help_cmd(message):
     is_admin = (message.from_user.id == ADMIN_ID)
     help_text = """🎵 *Музыкальный бот*
 
-🎵 *Найти музыку* — найди любую песню
-🆕 *Новинки* — свежие треки (до 6 минут)
+🎵 *Найти музыку* — ищи по названию (1-6 мин)
+🆕 *Новинки* — свежие треки
 ❓ *Помощь* — это сообщение
-
-*Как пользоваться:*
-1. Нажми "Найти музыку" и введи название
-2. Выбери трек из списка
-3. Бот скачает и отправит MP3
 
 *По вопросам:* @avgustc"""
     
     if is_admin:
-        help_text += "\n\n🔗 *Рефералка* — создавай ссылки и отслеживай переходы"
+        help_text += "\n\n🔗 *Рефералка* — создавай ссылки\n🗑 `/dellink_название` — удалить ссылку"
     
     bot.send_message(message.chat.id, help_text, reply_markup=main_menu(is_admin), parse_mode='Markdown')
 
@@ -357,7 +451,7 @@ def play_track(call):
             if search_result:
                 track = search_result[0]
             else:
-                raise Exception("Трек не найден на YouTube")
+                raise Exception("Трек не найден")
         
         file = download_audio(track['url'], track['title'])
         with open(file, 'rb') as f:
