@@ -10,7 +10,7 @@ from datetime import datetime
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
-ADMIN_ID = 405071693  # 👈 ТВОЙ TELEGRAM ID (проверь через @userinfobot)
+ADMIN_ID = 5298604296  # 👈 ТВОЙ TELEGRAM ID (проверь через @userinfobot)
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ========== БАЗА ДАННЫХ ==========
