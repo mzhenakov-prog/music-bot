@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 
 # ===== НАСТРОЙКИ =====
-BOT_TOKEN = 'ТВОЙ_ТОКЕН'
+BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 ADMIN_ID = 5298604296
 
 bot = telebot.TeleBot(BOT_TOKEN)
