@@ -52,13 +52,13 @@ def get_total_users():
     conn.close()
     return count
 
-def get_user_ref_stats(user_id):
+def get_user_info(user_id):
     conn = sqlite3.connect('music_bot.db')
     c = conn.cursor()
-    c.execute("SELECT ref_count FROM users WHERE user_id = ?", (user_id,))
+    c.execute("SELECT username, first_seen, referrer_id, ref_count FROM users WHERE user_id = ?", (user_id,))
     result = c.fetchone()
     conn.close()
-    return result[0] if result else 0
+    return result
 
 init_db()
 
@@ -78,16 +78,15 @@ POPULAR_TRACKS = [
 # ========== КНОПКИ ==========
 def main_menu(is_admin=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("🎵 Поиск музыки", "🔥 Популярное")
     if is_admin:
-        markup.add("🎵 Поиск музыки", "🔥 Популярное")
         markup.add("🔗 Моя рефка", "👥 Рефка для друга")
         markup.add("📊 Реф статистика")
-    else:
-        markup.add("🎵 Поиск музыки", "🔥 Популярное")
+    markup.add("❓ Помощь")
     return markup
 
 # ========== ПОИСК НА YOUTUBE ==========
-def search_youtube(query, max_results=30):
+def search_youtube(query):
     ydl_opts = {
         'quiet': True,
         'default_search': 'ytsearch',
@@ -95,7 +94,7 @@ def search_youtube(query, max_results=30):
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            search_query = f"ytsearch{max_results}:{query} audio"
+            search_query = f"ytsearch5:{query} audio"
             info = ydl.extract_info(search_query, download=False)
             tracks = []
             if 'entries' in info:
@@ -111,10 +110,10 @@ def search_youtube(query, max_results=30):
                             })
             return tracks
     except Exception as e:
-        print(f"Ошибка поиска: {e}")
+        print(f"Ошибка: {e}")
         return []
 
-# ========== СКАЧИВАНИЕ АУДИО (yt-dlp с запасными форматами) ==========
+# ========== СКАЧИВАНИЕ ==========
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
     opts = {
@@ -122,33 +121,19 @@ def download_audio(url, title):
         'outtmpl': f'/tmp/{safe_title}.%(ext)s',
         'quiet': True,
         'ignoreerrors': True,
-        'no_warnings': True,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            if info is None:
-                raise Exception("Нет данных")
-            
-            # Ищем скачанный файл
-            base = f'/tmp/{safe_title}'
-            for ext in ['.mp3', '.m4a', '.webm', '.opus']:
-                if os.path.exists(base + ext):
-                    return base + ext
-            
             filename = ydl.prepare_filename(info)
-            if os.path.exists(filename):
-                return filename
-            
-            raise Exception("Файл не найден")
-    except Exception as e:
-        print(f"Ошибка: {e}")
-        # Запасной вариант
-        opts['format'] = 'bestaudio/best'
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
+            if not os.path.exists(filename):
+                base = filename.rsplit('.', 1)[0]
+                for ext in ['.mp3', '.m4a', '.webm']:
+                    if os.path.exists(base + ext):
+                        return base + ext
             return filename
+    except Exception as e:
+        raise Exception(f"Ошибка: {e}")
 
 def format_time(seconds):
     if not seconds:
@@ -157,16 +142,14 @@ def format_time(seconds):
     s = int(seconds) % 60
     return f"{m}:{s:02d}"
 
-# ========== ПОКАЗ СТРАНИЦЫ ==========
-user_data = {}
+# ========== ПОКАЗ ТРЕКОВ ==========
+user_tracks = {}
 
-def show_page(chat_id, page=0, per_page=10):
-    data = user_data.get(chat_id)
-    if not data or not data['tracks']:
-        bot.send_message(chat_id, "❌ Нет результатов.")
+def show_tracks(chat_id, tracks, title, page=0, per_page=5):
+    if not tracks:
+        bot.send_message(chat_id, "❌ Ничего не найдено.")
         return
     
-    tracks = data['tracks']
     total_pages = (len(tracks) + per_page - 1) // per_page
     start = page * per_page
     end = min(start + per_page, len(tracks))
@@ -178,15 +161,17 @@ def show_page(chat_id, page=0, per_page=10):
         duration = format_time(t.get('duration'))
         markup.add(types.InlineKeyboardButton(f"🎵 {t['title'][:45]} [{duration}]", callback_data=f"play_{idx}"))
     
-    nav = []
-    if page > 0:
-        nav.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"page_{page-1}"))
-    if page < total_pages - 1:
-        nav.append(types.InlineKeyboardButton("➡️ Далее", callback_data=f"page_{page+1}"))
-    if nav:
-        markup.add(*nav)
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"page_{page-1}"))
+        if page < total_pages - 1:
+            nav.append(types.InlineKeyboardButton("➡️ Далее", callback_data=f"page_{page+1}"))
+        if nav:
+            markup.add(*nav)
     
-    bot.send_message(chat_id, f"🎵 *{data['title']}* (стр. {page+1}/{total_pages})", reply_markup=markup, parse_mode='Markdown')
+    user_tracks[chat_id] = tracks
+    bot.send_message(chat_id, f"🎵 *{title}* (стр. {page+1}/{total_pages})", reply_markup=markup, parse_mode='Markdown')
 
 # ========== КОМАНДЫ ==========
 @bot.message_handler(commands=['start'])
@@ -214,41 +199,32 @@ def search_cmd(message):
 
 def do_search(message):
     msg = bot.send_message(message.chat.id, "🔎 *Ищу...*", parse_mode='Markdown')
-    tracks = search_youtube(message.text, max_results=30)
+    tracks = search_youtube(message.text)
     
     if tracks:
         bot.delete_message(message.chat.id, msg.message_id)
-        user_data[message.chat.id] = {
-            'tracks': tracks,
-            'title': f"Результаты: {message.text}",
-            'page': 0
-        }
-        show_page(message.chat.id, 0)
+        show_tracks(message.chat.id, tracks, f"Результаты: {message.text}")
     else:
         bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, msg.message_id, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "🔥 Популярное")
 def popular_cmd(message):
     tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in POPULAR_TRACKS]
-    user_data[message.chat.id] = {
-        'tracks': tracks,
-        'title': "🔥 Популярное",
-        'page': 0
-    }
-    show_page(message.chat.id, 0)
+    show_tracks(message.chat.id, tracks, "🔥 Популярное")
 
 @bot.message_handler(func=lambda msg: msg.text == "🔗 Моя рефка")
 def my_ref_cmd(message):
     user_id = message.from_user.id
     bot_username = bot.get_me().username
     ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    ref_count = get_ref_stats(user_id)
     
     text = f"""🔗 *Твоя реферальная ссылка*
 
 `{ref_link}`
 
 📊 *Твоя статистика:*
-• Приглашено: {get_user_ref_stats(user_id)}
+• Приглашено: {ref_count}
 • Всего пользователей: {get_total_users()}"""
     
     bot.send_message(message.chat.id, text, reply_markup=main_menu(user_id == ADMIN_ID), parse_mode='Markdown')
@@ -267,14 +243,24 @@ def process_friend_ref(message):
         friend_id = int(message.text.strip())
         bot_username = bot.get_me().username
         ref_link = f"https://t.me/{bot_username}?start=ref_{friend_id}"
+        ref_count = get_ref_stats(friend_id)
         
-        text = f"""🔗 *Реферальная ссылка для пользователя* `{friend_id}`
+        # Получаем информацию о пользователе
+        user_info = get_user_info(friend_id)
+        username = user_info[0] if user_info else "неизвестно"
+        first_seen = user_info[1] if user_info else "неизвестно"
+        
+        text = f"""🔗 *Реферальная ссылка для пользователя*
 
-`{ref_link}`
+👤 ID: `{friend_id}`
+👤 Username: @{username}
 
-📊 *Его статистика на данный момент:*
-• Приглашено: {get_user_ref_stats(friend_id)}
-• Всего пользователей: {get_total_users()}"""
+🔗 Ссылка: `{ref_link}`
+
+📊 *Его статистика:*
+• Приглашено: {ref_count}
+• Всего пользователей: {get_total_users()}
+• Впервые в боте: {first_seen}"""
         
         bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
     except:
@@ -292,46 +278,72 @@ def ref_stats_cmd(message):
 def show_user_stats(message):
     try:
         user_id = int(message.text.strip())
-        ref_count = get_user_ref_stats(user_id)
+        ref_count = get_ref_stats(user_id)
+        user_info = get_user_info(user_id)
         
-        try:
-            user = bot.get_chat(user_id)
-            name = user.username or f"пользователь {user_id}"
-        except:
-            name = f"пользователь {user_id}"
+        username = user_info[0] if user_info else "неизвестно"
+        first_seen = user_info[1] if user_info else "неизвестно"
+        referrer_id = user_info[2] if user_info else None
+        invited = user_info[3] if user_info else 0
         
-        text = f"""📊 *Статистика пользователя* `{name}`
+        text = f"""📊 *Статистика пользователя*
 
-• Приглашено: {ref_count}
-• Всего пользователей в боте: {get_total_users()}"""
+👤 ID: `{user_id}`
+👤 Username: @{username}
+
+📈 *Реферальная статистика:*
+• Приглашено: {invited}
+• Пришёл по ссылке от: {referrer_id if referrer_id else 'сам'}
+
+📅 *Активность:*
+• Впервые в боте: {first_seen}
+• Всего пользователей: {get_total_users()}"""
         
         bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
     except:
         bot.send_message(message.chat.id, "❌ Неверный ID. Попробуй ещё раз.", reply_markup=main_menu(True))
 
+@bot.message_handler(func=lambda msg: msg.text == "❓ Помощь")
+def help_cmd(message):
+    is_admin = (message.from_user.id == ADMIN_ID)
+    help_text = """🎵 *Музыкальный бот*
+
+*Команды:*
+🎵 Поиск музыки — найди любую песню
+🔥 Популярное — топ треки"""
+    
+    if is_admin:
+        help_text += """
+        
+🔗 Моя рефка — твоя реферальная ссылка
+👥 Рефка для друга — создать ссылку для друга
+📊 Реф статистика — статистика пользователя"""
+    
+    help_text += """
+
+❓ Помощь — это сообщение
+
+@avgustc"""
+    
+    bot.send_message(message.chat.id, help_text, reply_markup=main_menu(is_admin), parse_mode='Markdown')
+
 # ========== НАВИГАЦИЯ ==========
 @bot.callback_query_handler(func=lambda call: call.data.startswith('page_'))
 def handle_page(call):
     page = int(call.data.split('_')[1])
-    data = user_data.get(call.message.chat.id)
-    if not data:
+    tracks = user_tracks.get(call.message.chat.id, [])
+    if not tracks:
         bot.answer_callback_query(call.id, "❌ Результаты поиска устарели")
         return
     
-    data['page'] = page
     bot.delete_message(call.message.chat.id, call.message.message_id)
-    show_page(call.message.chat.id, page)
+    show_tracks(call.message.chat.id, tracks, call.message.text.split('*')[1].split('*')[0], page)
 
 # ========== СКАЧИВАНИЕ ==========
 @bot.callback_query_handler(func=lambda call: call.data.startswith('play_'))
 def play_track(call):
     idx = int(call.data.split('_')[1])
-    data = user_data.get(call.message.chat.id)
-    if not data:
-        bot.answer_callback_query(call.id, "❌ Результаты поиска устарели")
-        return
-    
-    tracks = data['tracks']
+    tracks = user_tracks.get(call.message.chat.id, [])
     if idx >= len(tracks):
         bot.answer_callback_query(call.id, "❌ Трек не найден")
         return
@@ -342,16 +354,13 @@ def play_track(call):
     
     try:
         if 'youtube.com' not in track['url']:
-            search_result = search_youtube(track['title'], max_results=1)
+            search_result = search_youtube(track['title'])
             if search_result:
                 track = search_result[0]
             else:
-                raise Exception("Трек не найден на YouTube")
+                raise Exception("Трек не найден")
         
         file = download_audio(track['url'], track['title'])
-        if not os.path.exists(file):
-            raise Exception("Файл не скачался")
-            
         with open(file, 'rb') as f:
             bot.send_audio(call.message.chat.id, f, title=track['title'])
         os.remove(file)
