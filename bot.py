@@ -7,13 +7,12 @@ import time
 import sqlite3
 from datetime import datetime
 
-# ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 ADMIN_ID = 5298604296
 BOT_USERNAME = 'reservettbot'
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ========== БАЗА ДАННЫХ ==========
+# БАЗА ДАННЫХ
 def init_db():
     conn = sqlite3.connect('music_bot.db')
     c = conn.cursor()
@@ -95,7 +94,6 @@ NEW_TRACKS = [
     "Mafia Style - TRAP MAFIA HOUSE", "Базовый минимум - Sahi MIA ROYKA"
 ]
 
-# ========== КНОПКИ ==========
 def main_menu(is_admin=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("🎵 Найти музыку", "🆕 Новинки")
@@ -110,9 +108,9 @@ def ref_menu():
     markup.add(types.InlineKeyboardButton("📊 Мои ссылки", callback_data="my_refs"))
     return markup
 
-# ========== ПОИСК И СКАЧИВАНИЕ ==========
-def search_youtube(query):
-    ydl_opts = {'quiet': True, 'default_search': 'ytsearch5', 'extract_flat': True}
+# ========== ПОИСК НА SOUNDCLOUD ==========
+def search_soundcloud(query):
+    ydl_opts = {'quiet': True, 'default_search': 'scsearch5', 'extract_flat': True}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(query, download=False)
@@ -124,7 +122,7 @@ def search_youtube(query):
                         if dur and 60 <= dur <= 360:
                             tracks.append({
                                 'title': e.get('title', 'Unknown'),
-                                'url': e.get('url') or f"https://youtube.com/watch?v={e.get('id')}",
+                                'url': e.get('url'),
                                 'duration': dur
                             })
             return tracks
@@ -167,7 +165,6 @@ def show_tracks(chat_id, tracks, title, page=0):
     user_tracks[chat_id] = tracks
     bot.send_message(chat_id, f"🎵 *{title}* (стр. {page+1}/{total})", reply_markup=markup, parse_mode='Markdown')
 
-# ========== КОМАНДЫ ==========
 @bot.message_handler(commands=['start'])
 def start(m):
     uid = m.from_user.id
@@ -190,8 +187,8 @@ def search_cmd(m):
     bot.register_next_step_handler(m, do_search)
 
 def do_search(m):
-    msg = bot.send_message(m.chat.id, "🔎 *Ищу...*", parse_mode='Markdown')
-    tracks = search_youtube(m.text)
+    msg = bot.send_message(m.chat.id, "🔎 *Ищу на SoundCloud...*", parse_mode='Markdown')
+    tracks = search_soundcloud(m.text)
     if tracks:
         bot.delete_message(m.chat.id, msg.message_id)
         show_tracks(m.chat.id, tracks, f"Результаты: {m.text}")
@@ -200,7 +197,7 @@ def do_search(m):
 
 @bot.message_handler(func=lambda m: m.text == "🆕 Новинки")
 def new_cmd(m):
-    tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in NEW_TRACKS]
+    tracks = [{'title': t, 'url': f"https://soundcloud.com/search?q={t.replace(' ', '+')}", 'duration': 180} for t in NEW_TRACKS]
     show_tracks(m.chat.id, tracks, "🆕 Новинки")
 
 @bot.message_handler(func=lambda m: m.text == "🔗 Рефералка")
@@ -294,7 +291,7 @@ def play_track(call):
 @bot.message_handler(func=lambda m: m.text == "❓ Помощь")
 def help_cmd(m):
     is_admin = m.from_user.id == ADMIN_ID
-    text = "🎵 *Музыкальный бот*\n\n🎵 Найти музыку\n🆕 Новинки"
+    text = "🎵 *Музыкальный бот*\n\n🎵 Найти музыку — SoundCloud\n🆕 Новинки"
     if is_admin:
         text += "\n\n🔗 Рефералка — создавай ссылки\n🗑 `/dellink_название`"
     text += "\n\n@avgustc"
