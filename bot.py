@@ -11,7 +11,7 @@ from datetime import datetime
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
 ADMIN_ID = 5298604296
-BOT_USERNAME = 'твой_бот'  # 👈 ЗАМЕНИ НА USERNAME БОТА (без @)
+BOT_USERNAME = 'muz_super_music_bot'  # 👈 ЗАМЕНИ НА USERNAME БОТА (без @)
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ========== БАЗА ДАННЫХ ==========
