@@ -52,6 +52,14 @@ def get_total_users():
     conn.close()
     return count
 
+def get_user_ref_stats(user_id):
+    conn = sqlite3.connect('music_bot.db')
+    c = conn.cursor()
+    c.execute("SELECT ref_count FROM users WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else 0
+
 init_db()
 
 # ========== ПОПУЛЯРНЫЕ ТРЕКИ ==========
@@ -72,7 +80,8 @@ def main_menu(is_admin=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     if is_admin:
         markup.add("🎵 Поиск музыки", "🔥 Популярное")
-        markup.add("🔗 Рефералка")
+        markup.add("🔗 Моя рефка", "👥 Рефка для друга")
+        markup.add("📊 Реф статистика")
     else:
         markup.add("🎵 Поиск музыки", "🔥 Популярное")
     return markup
@@ -105,6 +114,7 @@ def search_youtube(query, max_results=30):
         print(f"Ошибка поиска: {e}")
         return []
 
+# ========== СКАЧИВАНИЕ АУДИО (ИСПРАВЛЕННОЕ) ==========
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
     opts = {
@@ -113,26 +123,32 @@ def download_audio(url, title):
         'quiet': True,
         'ignoreerrors': True,
         'extract_flat': False,
+        'no_warnings': True,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
+            # Пробуем скачать
             info = ydl.extract_info(url, download=True)
             if info is None:
                 raise Exception("Нет данных")
             
-            # Ищем скачанный файл
-            base = f'/tmp/{safe_title}'
-            for ext in ['.mp3', '.m4a', '.webm', '.opus']:
-                if os.path.exists(base + ext):
-                    return base + ext
-            
             filename = ydl.prepare_filename(info)
-            if os.path.exists(filename):
-                return filename
             
-            raise Exception("Файл не найден")
+            # Проверяем наличие файла
+            if not os.path.exists(filename):
+                base = filename.rsplit('.', 1)[0]
+                for ext in ['.mp3', '.m4a', '.webm', '.opus']:
+                    if os.path.exists(base + ext):
+                        return base + ext
+                # Ищем любой файл с таким названием
+                for f in os.listdir('/tmp'):
+                    if f.startswith(safe_title):
+                        return f'/tmp/{f}'
+            
+            return filename
     except Exception as e:
         print(f"Ошибка: {e}")
+        # Запасной вариант
         opts['format'] = 'bestaudio/best'
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -226,26 +242,78 @@ def popular_cmd(message):
     }
     show_page(message.chat.id, 0)
 
-@bot.message_handler(func=lambda msg: msg.text == "🔗 Рефералка")
-def ref_cmd(message):
+@bot.message_handler(func=lambda msg: msg.text == "🔗 Моя рефка")
+def my_ref_cmd(message):
+    user_id = message.from_user.id
+    bot_username = bot.get_me().username
+    ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    
+    text = f"""🔗 *Твоя реферальная ссылка*
+
+`{ref_link}`
+
+📊 *Твоя статистика:*
+• Приглашено: {get_user_ref_stats(user_id)}
+• Всего пользователей: {get_total_users()}"""
+    
+    bot.send_message(message.chat.id, text, reply_markup=main_menu(user_id == ADMIN_ID), parse_mode='Markdown')
+
+@bot.message_handler(func=lambda msg: msg.text == "👥 Рефка для друга")
+def create_ref_for_friend(message):
     if message.from_user.id != ADMIN_ID:
         bot.send_message(message.chat.id, "❌ Только для создателя.")
         return
     
-    ref_count = get_ref_stats(ADMIN_ID)
-    total_users = get_total_users()
-    bot_username = bot.get_me().username
-    ref_link = f"https://t.me/{bot_username}?start=ref_{ADMIN_ID}"
-    
-    text = f"""🔗 *Реферальная ссылка*
+    bot.send_message(message.chat.id, "📝 *Введи Telegram ID пользователя*\n\nНапример: `5298604296`", parse_mode='Markdown')
+    bot.register_next_step_handler(message, process_friend_ref)
+
+def process_friend_ref(message):
+    try:
+        friend_id = int(message.text.strip())
+        bot_username = bot.get_me().username
+        ref_link = f"https://t.me/{bot_username}?start=ref_{friend_id}"
+        
+        text = f"""🔗 *Реферальная ссылка для пользователя* `{friend_id}`
 
 `{ref_link}`
 
-📊 *Статистика:*
-• Приглашено: {ref_count}
-• Всего пользователей: {total_users}"""
+📊 *Его статистика на данный момент:*
+• Приглашено: {get_user_ref_stats(friend_id)}
+• Всего пользователей: {get_total_users()}"""
+        
+        bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
+    except:
+        bot.send_message(message.chat.id, "❌ Неверный ID. Попробуй ещё раз.", reply_markup=main_menu(True))
+
+@bot.message_handler(func=lambda msg: msg.text == "📊 Реф статистика")
+def ref_stats_cmd(message):
+    if message.from_user.id != ADMIN_ID:
+        bot.send_message(message.chat.id, "❌ Только для создателя.")
+        return
     
-    bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
+    bot.send_message(message.chat.id, "📝 *Введи Telegram ID пользователя*\n\nНапример: `5298604296`", parse_mode='Markdown')
+    bot.register_next_step_handler(message, show_user_stats)
+
+def show_user_stats(message):
+    try:
+        user_id = int(message.text.strip())
+        ref_count = get_user_ref_stats(user_id)
+        
+        # Пытаемся получить username
+        try:
+            user = bot.get_chat(user_id)
+            name = user.username or f"пользователь {user_id}"
+        except:
+            name = f"пользователь {user_id}"
+        
+        text = f"""📊 *Статистика пользователя* `{name}`
+
+• Приглашено: {ref_count}
+• Всего пользователей в боте: {get_total_users()}"""
+        
+        bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
+    except:
+        bot.send_message(message.chat.id, "❌ Неверный ID. Попробуй ещё раз.", reply_markup=main_menu(True))
 
 # ========== НАВИГАЦИЯ ==========
 @bot.callback_query_handler(func=lambda call: call.data.startswith('page_'))
@@ -287,6 +355,9 @@ def play_track(call):
                 raise Exception("Трек не найден на YouTube")
         
         file = download_audio(track['url'], track['title'])
+        if not os.path.exists(file):
+            raise Exception("Файл не скачался")
+            
         with open(file, 'rb') as f:
             bot.send_audio(call.message.chat.id, f, title=track['title'])
         os.remove(file)
