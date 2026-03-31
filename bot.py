@@ -118,15 +118,6 @@ NEW_TRACKS = [
     "Худи - Джиган, ARTIK & ASTI, NILETTO", "I Got Love - Miyagi & Эндшпиль feat. Рем Дигга"
 ]
 
-BAD_WORDS = ['плейлист', 'playlist', 'mix', 'сборник', 'хиты', 'top', 'best', 'megamix', 'mashup', 'live', 'концерт']
-
-def is_good_track(title):
-    title_lower = title.lower()
-    for word in BAD_WORDS:
-        if word in title_lower:
-            return False
-    return True
-
 # ========== КНОПКИ ==========
 def main_menu(is_admin=False):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -144,16 +135,16 @@ def ref_menu():
     )
     return markup
 
-# ========== ПОИСК НА YOUTUBE (рабочий как вчера) ==========
-def search_youtube(query, max_results=50):
+# ========== ПОИСК НА SOUNDCLOUD ==========
+def search_soundcloud(query, max_results=30):
     ydl_opts = {
         'quiet': True,
-        'default_search': 'ytsearch',
+        'default_search': 'scsearch',
         'extract_flat': True,
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            search_query = f"ytsearch{max_results}:{query} audio"
+            search_query = f"scsearch{max_results}:{query}"
             info = ydl.extract_info(search_query, download=False)
             tracks = []
             if info and 'entries' in info:
@@ -161,22 +152,23 @@ def search_youtube(query, max_results=50):
                     if entry:
                         title = entry.get('title', 'Unknown')
                         duration = entry.get('duration', 0)
-                        if duration and 60 <= duration <= 360 and is_good_track(title):
+                        url = entry.get('url')
+                        if url and duration and 60 <= duration <= 360:
                             tracks.append({
                                 'title': title,
-                                'url': f"https://youtube.com/watch?v={entry.get('id')}",
+                                'url': url,
                                 'duration': duration
                             })
             return tracks
     except Exception as e:
-        print(f"Ошибка поиска: {e}")
+        print(f"Ошибка поиска SoundCloud: {e}")
         return []
 
-# ========== СКАЧИВАНИЕ (рабочее как вчера) ==========
+# ========== СКАЧИВАНИЕ ==========
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
     opts = {
-        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
+        'format': 'bestaudio/best',
         'outtmpl': f'/tmp/{safe_title}.%(ext)s',
         'quiet': True,
         'ignoreerrors': True,
@@ -188,14 +180,9 @@ def download_audio(url, title):
             if not info:
                 raise Exception("Нет данных")
             filename = ydl.prepare_filename(info)
-            if not os.path.exists(filename):
-                base = filename.rsplit('.', 1)[0]
-                for ext in ['.mp3', '.m4a', '.webm']:
-                    if os.path.exists(base + ext):
-                        return base + ext
             return filename
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"Ошибка скачивания: {e}")
         raise Exception(f"Не удалось скачать: {e}")
 
 def format_time(seconds):
@@ -264,8 +251,8 @@ def search_cmd(message):
     bot.register_next_step_handler(message, do_search)
 
 def do_search(message):
-    msg = bot.send_message(message.chat.id, "🔎 *Ищу...*", parse_mode='Markdown')
-    tracks = search_youtube(message.text, max_results=50)
+    msg = bot.send_message(message.chat.id, "🔎 *Ищу на SoundCloud...*", parse_mode='Markdown')
+    tracks = search_soundcloud(message.text, max_results=50)
     
     if tracks:
         bot.delete_message(message.chat.id, msg.message_id)
@@ -275,7 +262,7 @@ def do_search(message):
 
 @bot.message_handler(func=lambda msg: msg.text == "🆕 Новинки")
 def new_cmd(message):
-    tracks = [{'title': t, 'url': f"https://youtube.com/results?search_query={t.replace(' ', '+')}", 'duration': 180} for t in NEW_TRACKS]
+    tracks = [{'title': t, 'url': f"https://soundcloud.com/search?q={t.replace(' ', '+')}", 'duration': 180} for t in NEW_TRACKS]
     show_tracks(message.chat.id, tracks, "🆕 Новинки")
 
 @bot.message_handler(func=lambda msg: msg.text == "🔗 Рефералка")
@@ -443,8 +430,8 @@ def play_track(call):
     msg = bot.send_message(call.message.chat.id, f"🎵 *{track['title']}*\n⏳ Скачивание...", parse_mode='Markdown')
     
     try:
-        if 'youtube.com' not in track['url']:
-            search_result = search_youtube(track['title'], max_results=1)
+        if 'soundcloud.com' not in track['url']:
+            search_result = search_soundcloud(track['title'], max_results=1)
             if search_result:
                 track = search_result[0]
             else:
@@ -464,5 +451,5 @@ def play_track(call):
         bot.edit_message_text(f"❌ Ошибка: {str(e)[:100]}", call.message.chat.id, msg.message_id, parse_mode='Markdown')
 
 if __name__ == '__main__':
-    print("🎵 Музыкальный бот запущен!")
+    print("🎵 Музыкальный бот (SoundCloud) запущен!")
     bot.polling(none_stop=True)
