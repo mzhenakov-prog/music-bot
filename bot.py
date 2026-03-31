@@ -24,6 +24,13 @@ def init_db():
                   first_seen TEXT,
                   referrer_id INTEGER,
                   ref_count INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS ref_links
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  code TEXT UNIQUE,
+                  user_id INTEGER,
+                  created_by INTEGER,
+                  created_at TEXT,
+                  clicks INTEGER DEFAULT 0)''')
     conn.commit()
     conn.close()
 
@@ -34,6 +41,29 @@ def add_user(user_id, username, referrer_id=None):
               (user_id, username, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), referrer_id))
     if referrer_id and referrer_id != user_id:
         c.execute("UPDATE users SET ref_count = ref_count + 1 WHERE user_id = ?", (referrer_id,))
+    conn.commit()
+    conn.close()
+
+def add_ref_link(code, user_id, created_by):
+    conn = sqlite3.connect('music_bot.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO ref_links (code, user_id, created_by, created_at) VALUES (?, ?, ?, ?)",
+              (code, user_id, created_by, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+    conn.close()
+
+def get_ref_links(created_by):
+    conn = sqlite3.connect('music_bot.db')
+    c = conn.cursor()
+    c.execute("SELECT id, code, user_id, created_at, clicks FROM ref_links WHERE created_by = ? ORDER BY id DESC", (created_by,))
+    links = c.fetchall()
+    conn.close()
+    return links
+
+def click_ref_link(code):
+    conn = sqlite3.connect('music_bot.db')
+    c = conn.cursor()
+    c.execute("UPDATE ref_links SET clicks = clicks + 1 WHERE code = ?", (code,))
     conn.commit()
     conn.close()
 
@@ -56,7 +86,6 @@ def get_total_users():
 init_db()
 
 # ========== НОВИНКИ ==========
-# Список новых треков (до 6 минут)
 NEW_TRACKS = [
     "SMS - UncleFlexxx", "Тону - HOLLYFLAME", "КУКЛА Remix 2026 - Дискотека Авария, VONAMOUR",
     "Плакала надежда - Jakone, Kiliana, Любовь Успенская", "NOBODY - Aarne, Toxi$, Big Baby Tape",
@@ -83,6 +112,14 @@ def main_menu(is_admin=False):
     markup.add("❓ Помощь")
     return markup
 
+def ref_menu():
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("📝 Создать ссылку", callback_data="create_ref"),
+        types.InlineKeyboardButton("📊 Мои ссылки", callback_data="my_refs")
+    )
+    return markup
+
 # ========== ПОИСК НА YOUTUBE ==========
 def search_youtube(query, max_results=10):
     ydl_opts = {
@@ -100,7 +137,7 @@ def search_youtube(query, max_results=10):
                     if entry:
                         title = entry.get('title', 'Unknown')
                         duration = entry.get('duration', 0)
-                        if duration and 60 <= duration <= 360:  # 1-6 минут
+                        if duration and 60 <= duration <= 360:
                             tracks.append({
                                 'title': title,
                                 'url': entry.get('url') or f"https://youtube.com/watch?v={entry.get('id')}",
@@ -111,22 +148,35 @@ def search_youtube(query, max_results=10):
         print(f"Ошибка поиска: {e}")
         return []
 
-# ========== СКАЧИВАНИЕ ==========
+# ========== СКАЧИВАНИЕ (исправленное) ==========
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
     opts = {
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
         'outtmpl': f'/tmp/{safe_title}.%(ext)s',
         'quiet': True,
         'ignoreerrors': True,
+        'no_warnings': True,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
+            if info is None:
+                raise Exception("Нет данных")
+            
             filename = ydl.prepare_filename(info)
+            if not os.path.exists(filename):
+                base = filename.rsplit('.', 1)[0]
+                for ext in ['.mp3', '.m4a', '.webm']:
+                    if os.path.exists(base + ext):
+                        return base + ext
             return filename
     except Exception as e:
-        raise Exception(f"Ошибка: {e}")
+        print(f"Ошибка: {e}")
+        opts['format'] = 'bestaudio/best'
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            return ydl.prepare_filename(info)
 
 def format_time(seconds):
     if not seconds:
@@ -135,7 +185,7 @@ def format_time(seconds):
     s = int(seconds) % 60
     return f"{m}:{s:02d}"
 
-# ========== ПОКАЗ ТРЕКОВ (с пагинацией) ==========
+# ========== ПОКАЗ ТРЕКОВ ==========
 user_tracks = {}
 
 def show_tracks(chat_id, tracks, title, page=0, per_page=10):
@@ -211,22 +261,48 @@ def ref_cmd(message):
         bot.send_message(message.chat.id, "❌ Только для создателя.")
         return
     
-    bot_username = bot.get_me().username
-    ref_link = f"https://t.me/{bot_username}?start=ref_{ADMIN_ID}"
-    total_users = get_total_users()
-    ref_count = get_ref_stats(ADMIN_ID)
+    bot.send_message(message.chat.id, "🔗 *Реферальная панель*", reply_markup=ref_menu(), parse_mode='Markdown')
+
+# ========== РЕФЕРАЛЬНЫЕ КНОПКИ ==========
+@bot.callback_query_handler(func=lambda call: call.data == "create_ref")
+def create_ref(call):
+    bot.send_message(call.message.chat.id, "📝 *Введи Telegram ID пользователя*\n\nНапример: `5298604296`", parse_mode='Markdown')
+    bot.register_next_step_handler(call.message, process_create_ref)
+
+def process_create_ref(message):
+    try:
+        user_id = int(message.text.strip())
+        code = f"ref_{user_id}_{int(time.time())}"
+        add_ref_link(code, user_id, ADMIN_ID)
+        
+        bot_username = bot.get_me().username
+        ref_link = f"https://t.me/{bot_username}?start={code}"
+        
+        text = f"""✅ *Реферальная ссылка создана!*
+
+👤 Для пользователя: `{user_id}`
+🔗 Ссылка: `{ref_link}`
+
+📊 *Отслеживание:*
+Переходы по этой ссылке будут отображаться в разделе "Мои ссылки"."""
+        
+        bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
+    except:
+        bot.send_message(message.chat.id, "❌ Неверный ID. Попробуй ещё раз.", reply_markup=main_menu(True))
+
+@bot.callback_query_handler(func=lambda call: call.data == "my_refs")
+def my_refs(call):
+    links = get_ref_links(ADMIN_ID)
     
-    text = f"""🔗 *Реферальная ссылка*
-
-`{ref_link}`
-
-📊 *Статистика:*
-• Приглашено: {ref_count}
-• Всего пользователей: {total_users}
-
-Отправляй ссылку друзьям — они заходят в бота, а ты видишь статистику!"""
+    if not links:
+        bot.send_message(call.message.chat.id, "📭 *У тебя пока нет созданных ссылок*", reply_markup=ref_menu(), parse_mode='Markdown')
+        return
     
-    bot.send_message(message.chat.id, text, reply_markup=main_menu(True), parse_mode='Markdown')
+    text = "🔗 *Твои реферальные ссылки:*\n\n"
+    for link in links[:10]:  # показываем последние 10
+        text += f"📌 `ref_{link[3]}` — переходов: {link[4]}\n"
+    
+    bot.send_message(call.message.chat.id, text, reply_markup=ref_menu(), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "❓ Помощь")
 def help_cmd(message):
@@ -245,7 +321,7 @@ def help_cmd(message):
 *По вопросам:* @avgustc"""
     
     if is_admin:
-        help_text += "\n\n🔗 *Рефералка* — твоя реферальная ссылка (статистика переходов)"
+        help_text += "\n\n🔗 *Рефералка* — создавай ссылки и отслеживай переходы"
     
     bot.send_message(message.chat.id, help_text, reply_markup=main_menu(is_admin), parse_mode='Markdown')
 
