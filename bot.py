@@ -85,21 +85,19 @@ def search_music(query):
         return []
 
 # ========== СКАЧИВАНИЕ ==========
+from pytube import YouTube
+
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title).strip()[:50]
-    opts = {
-        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
-        'outtmpl': safe_title,
-        'quiet': True,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-    }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([url])
-    return f"{safe_title}.mp3"
+    try:
+        yt = YouTube(url)
+        stream = yt.streams.filter(only_audio=True).first()
+        if not stream:
+            raise Exception("Аудио не найдено")
+        file = stream.download(filename=f"{safe_title}.mp4")
+        return file
+    except Exception as e:
+        raise Exception(f"Ошибка: {e}")
 
 def format_time(seconds):
     if not seconds:
