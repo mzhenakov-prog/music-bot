@@ -1,6 +1,6 @@
 import telebot
 from telebot import types
-from pytube import YouTube
+import yt_dlp
 import os
 import re
 import random
@@ -10,7 +10,7 @@ from datetime import datetime
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
-ADMIN_ID = 5298604296  # 👈 ТВОЙ ID
+ADMIN_ID = 5298604296
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ========== БАЗА ДАННЫХ ==========
@@ -94,7 +94,6 @@ def search_youtube(query, max_results=30):
         'extract_flat': True,
     }
     try:
-        import yt_dlp
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             search_query = f"ytsearch{max_results}:{query} audio"
             info = ydl.extract_info(search_query, download=False)
@@ -115,19 +114,41 @@ def search_youtube(query, max_results=30):
         print(f"Ошибка поиска: {e}")
         return []
 
-# ========== СКАЧИВАНИЕ АУДИО (через pytube) ==========
+# ========== СКАЧИВАНИЕ АУДИО (yt-dlp с запасными форматами) ==========
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
+    opts = {
+        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
+        'outtmpl': f'/tmp/{safe_title}.%(ext)s',
+        'quiet': True,
+        'ignoreerrors': True,
+        'no_warnings': True,
+    }
     try:
-        yt = YouTube(url)
-        stream = yt.streams.filter(only_audio=True).first()
-        if not stream:
-            raise Exception("Аудио не найдено")
-        file = stream.download(output_path='/tmp', filename=f'{safe_title}.mp4')
-        return file
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if info is None:
+                raise Exception("Нет данных")
+            
+            # Ищем скачанный файл
+            base = f'/tmp/{safe_title}'
+            for ext in ['.mp3', '.m4a', '.webm', '.opus']:
+                if os.path.exists(base + ext):
+                    return base + ext
+            
+            filename = ydl.prepare_filename(info)
+            if os.path.exists(filename):
+                return filename
+            
+            raise Exception("Файл не найден")
     except Exception as e:
-        print(f"Ошибка pytube: {e}")
-        raise Exception(f"Не удалось скачать: {e}")
+        print(f"Ошибка: {e}")
+        # Запасной вариант
+        opts['format'] = 'bestaudio/best'
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            return filename
 
 def format_time(seconds):
     if not seconds:
@@ -328,6 +349,9 @@ def play_track(call):
                 raise Exception("Трек не найден на YouTube")
         
         file = download_audio(track['url'], track['title'])
+        if not os.path.exists(file):
+            raise Exception("Файл не скачался")
+            
         with open(file, 'rb') as f:
             bot.send_audio(call.message.chat.id, f, title=track['title'])
         os.remove(file)
