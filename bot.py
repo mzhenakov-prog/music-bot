@@ -10,7 +10,7 @@ from datetime import datetime
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
-ADMIN_ID = 405071693  # 👈 ЗДЕСЬ ТВОЙ ID
+ADMIN_ID = 405071693
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ========== БАЗА ДАННЫХ ==========
@@ -110,6 +110,7 @@ def search_youtube(query, max_results=30):
         print(f"Ошибка поиска: {e}")
         return []
 
+# ========== СКАЧИВАНИЕ АУДИО (ИСПРАВЛЕННОЕ) ==========
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
     opts = {
@@ -125,6 +126,7 @@ def download_audio(url, title):
             filename = ydl.prepare_filename(info)
             return filename
     except Exception as e:
+        # Если не работает, пробуем другой формат
         opts['format'] = 'bestaudio/best'
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -186,7 +188,7 @@ def start(message):
     add_user(user_id, username, referrer)
     
     is_admin = (user_id == ADMIN_ID)
-    bot.send_message(message.chat.id, "🎵 *Музыкальный бот готов!*", reply_markup=main_menu(is_admin), parse_mode='Markdown')
+    bot.send_message(message.chat.id, "🎵 *Музыкальный бот готов!*\n\nИспользуй кнопки внизу.", reply_markup=main_menu(is_admin), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "🎵 Поиск музыки")
 def search_cmd(message):
@@ -206,7 +208,7 @@ def do_search(message):
         }
         show_page(message.chat.id, 0)
     else:
-        bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, msg.message_id, parse_mode='Markdown')
+        bot.edit_message_text("❌ Ничего не найдено. Попробуй другой запрос.", message.chat.id, msg.message_id, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "🔥 Популярное")
 def popular_cmd(message):
