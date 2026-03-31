@@ -110,16 +110,28 @@ def search_youtube(query, max_results=30):
         print(f"Ошибка поиска: {e}")
         return []
 
+# ========== СКАЧИВАНИЕ АУДИО (ИСПРАВЛЕННОЕ) ==========
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
     opts = {
-        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
+        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
         'outtmpl': f'/tmp/{safe_title}.%(ext)s',
         'quiet': True,
+        'ignoreerrors': True,
+        'extract_flat': False,
     }
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        return ydl.prepare_filename(info)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            return filename
+    except Exception as e:
+        # Если не работает, пробуем другой формат
+        opts['format'] = 'bestaudio/best'
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            return filename
 
 def format_time(seconds):
     if not seconds:
