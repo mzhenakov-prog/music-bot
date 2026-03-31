@@ -88,7 +88,7 @@ def search_music(query):
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title).strip()[:50]
     opts = {
-        'format': 'bestaudio/best',
+        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
         'outtmpl': safe_title,
         'quiet': True,
         'postprocessors': [{
