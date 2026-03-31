@@ -1,13 +1,12 @@
 import telebot
 from telebot import types
+import yt_dlp
 import os
 import re
 import random
 import time
 import sqlite3
 from datetime import datetime
-from pytubefix import YouTube
-from pytubefix import Search
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
@@ -145,35 +144,58 @@ def ref_menu():
     )
     return markup
 
-# ========== ПОИСК НА YOUTUBE (через pytubefix) ==========
+# ========== ПОИСК НА YOUTUBE (рабочий как вчера) ==========
 def search_youtube(query, max_results=50):
+    ydl_opts = {
+        'quiet': True,
+        'default_search': 'ytsearch',
+        'extract_flat': True,
+    }
     try:
-        search = Search(query)
-        tracks = []
-        for video in search.results[:max_results]:
-            if video.length and 60 <= video.length <= 360 and is_good_track(video.title):
-                tracks.append({
-                    'title': video.title,
-                    'url': f"https://youtube.com/watch?v={video.video_id}",
-                    'duration': video.length
-                })
-        return tracks
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            search_query = f"ytsearch{max_results}:{query} audio"
+            info = ydl.extract_info(search_query, download=False)
+            tracks = []
+            if info and 'entries' in info:
+                for entry in info['entries']:
+                    if entry:
+                        title = entry.get('title', 'Unknown')
+                        duration = entry.get('duration', 0)
+                        if duration and 60 <= duration <= 360 and is_good_track(title):
+                            tracks.append({
+                                'title': title,
+                                'url': f"https://youtube.com/watch?v={entry.get('id')}",
+                                'duration': duration
+                            })
+            return tracks
     except Exception as e:
         print(f"Ошибка поиска: {e}")
         return []
 
-# ========== СКАЧИВАНИЕ (через pytubefix) ==========
+# ========== СКАЧИВАНИЕ (рабочее как вчера) ==========
 def download_audio(url, title):
     safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
+    opts = {
+        'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best',
+        'outtmpl': f'/tmp/{safe_title}.%(ext)s',
+        'quiet': True,
+        'ignoreerrors': True,
+        'no_warnings': True,
+    }
     try:
-        yt = YouTube(url)
-        stream = yt.streams.filter(only_audio=True).first()
-        if not stream:
-            raise Exception("Аудио не найдено")
-        file = stream.download(output_path='/tmp', filename=f'{safe_title}.mp4')
-        return file
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if not info:
+                raise Exception("Нет данных")
+            filename = ydl.prepare_filename(info)
+            if not os.path.exists(filename):
+                base = filename.rsplit('.', 1)[0]
+                for ext in ['.mp3', '.m4a', '.webm']:
+                    if os.path.exists(base + ext):
+                        return base + ext
+            return filename
     except Exception as e:
-        print(f"Ошибка скачивания: {e}")
+        print(f"Ошибка: {e}")
         raise Exception(f"Не удалось скачать: {e}")
 
 def format_time(seconds):
