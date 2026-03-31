@@ -10,7 +10,7 @@ from datetime import datetime
 
 # ========== НАСТРОЙКИ ==========
 BOT_TOKEN = '8617337625:AAGFRB7FkLyu7FuomW9YD_C7vHlwad5wzqc'
-ADMIN_ID = 405071693
+ADMIN_ID = 405071693  # 👈 ТВОЙ TELEGRAM ID (проверь через @userinfobot)
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ========== БАЗА ДАННЫХ ==========
@@ -31,7 +31,7 @@ def add_user(user_id, username, referrer_id=None):
     c = conn.cursor()
     c.execute("INSERT OR IGNORE INTO users (user_id, username, first_seen, referrer_id) VALUES (?, ?, ?, ?)",
               (user_id, username, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), referrer_id))
-    if referrer_id:
+    if referrer_id and referrer_id != user_id:
         c.execute("UPDATE users SET ref_count = ref_count + 1 WHERE user_id = ?", (referrer_id,))
     conn.commit()
     conn.close()
@@ -64,12 +64,7 @@ POPULAR_TRACKS = [
     "Сердце - Альберт Назранов", "На мурмулях - Это Радио", "Tom Ford - Moreart",
     "Чем прежде - Полка", "SMS (Slowed) - UncleFlexxx", "Намёк на нас - MOT",
     "Народ задыхался от боли - KAMILL'FO", "Вот уж вечер. Роса ft. С. Есенин - 10AGE",
-    "Mafia Style - TRAP MAFIA HOUSE", "Базовый минимум - Sahi MIA ROYKA",
-    "Витя АК - Бурановские бабушки", "Фраера - АлСми", "Молча - GUF, VEIGEL",
-    "Наследство - ICEGERGERT, SKY RAE", "Чегери - SHAMO", "Еще один вечер - Ramil'",
-    "Силуэт из к/ф «Алиса в Стране Чу...» - Ваня Дмитриенко, Аня Пересильд",
-    "Шутка - Akmal', Григорий Лепс", "Внутренний голос - Jeny Vesna", "Карта битая - Kiliana",
-    "Худи - Джиган, ARTIK & ASTI, NILETTO", "I Got Love - Miyagi & Эндшпиль feat. Рем Дигга"
+    "Mafia Style - TRAP MAFIA HOUSE", "Базовый минимум - Sahi MIA ROYKA"
 ]
 
 # ========== КНОПКИ ==========
@@ -124,9 +119,16 @@ def download_audio(url, title):
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
+            if not os.path.exists(filename):
+                # Пробуем найти любой скачанный файл
+                base = filename.rsplit('.', 1)[0]
+                for f in os.listdir('/tmp'):
+                    if f.startswith(safe_title):
+                        return f'/tmp/{f}'
             return filename
     except Exception as e:
-        # Если не работает, пробуем другой формат
+        print(f"Ошибка скачивания: {e}")
+        # Запасной вариант: только лучший аудио
         opts['format'] = 'bestaudio/best'
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -175,7 +177,7 @@ def show_page(chat_id, page=0, per_page=10):
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
-    username = message.from_user.username
+    username = message.from_user.username or "unknown"
     
     args = message.text.split()
     referrer = None
@@ -208,7 +210,7 @@ def do_search(message):
         }
         show_page(message.chat.id, 0)
     else:
-        bot.edit_message_text("❌ Ничего не найдено. Попробуй другой запрос.", message.chat.id, msg.message_id, parse_mode='Markdown')
+        bot.edit_message_text("❌ Ничего не найдено.", message.chat.id, msg.message_id, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda msg: msg.text == "🔥 Популярное")
 def popular_cmd(message):
@@ -228,7 +230,8 @@ def ref_cmd(message):
     
     ref_count = get_ref_stats(ADMIN_ID)
     total_users = get_total_users()
-    ref_link = f"https://t.me/твой_бот?start=ref_{ADMIN_ID}"
+    bot_username = bot.get_me().username
+    ref_link = f"https://t.me/{bot_username}?start=ref_{ADMIN_ID}"
     
     text = f"""🔗 *Реферальная ссылка*
 
@@ -281,12 +284,15 @@ def play_track(call):
                 raise Exception("Трек не найден на YouTube")
         
         file = download_audio(track['url'], track['title'])
+        if not os.path.exists(file):
+            raise Exception("Файл не скачался")
+            
         with open(file, 'rb') as f:
             bot.send_audio(call.message.chat.id, f, title=track['title'])
         os.remove(file)
         bot.delete_message(call.message.chat.id, msg.message_id)
     except Exception as e:
-        bot.edit_message_text(f"❌ Ошибка: {e}", call.message.chat.id, msg.message_id, parse_mode='Markdown')
+        bot.edit_message_text(f"❌ Ошибка: {str(e)[:100]}", call.message.chat.id, msg.message_id, parse_mode='Markdown')
 
 if __name__ == '__main__':
     print("🎵 Музыкальный бот запущен!")
