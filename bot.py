@@ -100,7 +100,7 @@ def get_total_users():
 
 init_db()
 
-# ========== НОВИНКИ (твои треки) ==========
+# ========== НОВИНКИ ==========
 NEW_TRACKS = [
     "SMS - UncleFlexxx", "Тону - HOLLYFLAME", "КУКЛА Remix 2026 - Дискотека Авария, VONAMOUR",
     "Плакала надежда - Jakone, Kiliana, Любовь Успенская", "NOBODY - Aarne, Toxi$, Big Baby Tape",
@@ -118,11 +118,9 @@ NEW_TRACKS = [
     "Худи - Джиган, ARTIK & ASTI, NILETTO", "I Got Love - Miyagi & Эндшпиль feat. Рем Дигга"
 ]
 
-# ========== ФИЛЬТР ДЛЯ ПОИСКА ==========
 BAD_WORDS = ['плейлист', 'playlist', 'mix', 'сборник', 'хиты', 'top', 'best', 'megamix', 'mashup', 'live', 'концерт']
 
 def is_good_track(title):
-    """Проверяет, что трек не плейлист и не сборник"""
     title_lower = title.lower()
     for word in BAD_WORDS:
         if word in title_lower:
@@ -158,12 +156,11 @@ def search_youtube(query, max_results=50):
             search_query = f"ytsearch{max_results}:{query} audio"
             info = ydl.extract_info(search_query, download=False)
             tracks = []
-            if 'entries' in info:
+            if info and 'entries' in info:
                 for entry in info['entries']:
                     if entry:
                         title = entry.get('title', 'Unknown')
                         duration = entry.get('duration', 0)
-                        # Фильтр: 1-6 минут, не плейлист
                         if duration and 60 <= duration <= 360 and is_good_track(title):
                             tracks.append({
                                 'title': title,
@@ -184,12 +181,11 @@ def download_audio(url, title):
         'quiet': True,
         'ignoreerrors': True,
         'no_warnings': True,
-        'extract_flat': False,
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            if info is None:
+            if not info:
                 raise Exception("Нет данных")
             
             filename = ydl.prepare_filename(info)
@@ -214,7 +210,7 @@ def format_time(seconds):
     s = int(seconds) % 60
     return f"{m}:{s:02d}"
 
-# ========== ПОКАЗ ТРЕКОВ ==========
+# ========== ПОКАЗ ТРЕКОВ (с пагинацией) ==========
 user_tracks = {}
 
 def show_tracks(chat_id, tracks, title, page=0, per_page=10):
@@ -233,16 +229,16 @@ def show_tracks(chat_id, tracks, title, page=0, per_page=10):
         duration = format_time(t.get('duration'))
         markup.add(types.InlineKeyboardButton(f"🎵 {t['title'][:45]} [{duration}]", callback_data=f"play_{idx}"))
     
-    if total_pages > 1:
-        nav = []
-        if page > 0:
-            nav.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"page_{page-1}"))
-        if page < total_pages - 1:
-            nav.append(types.InlineKeyboardButton("➡️ Далее", callback_data=f"page_{page+1}"))
-        if nav:
-            markup.add(*nav)
+    # Кнопки навигации
+    nav = []
+    if page > 0:
+        nav.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"page_{title}_{page-1}"))
+    if page < total_pages - 1:
+        nav.append(types.InlineKeyboardButton("➡️ Далее", callback_data=f"page_{title}_{page+1}"))
+    if nav:
+        markup.add(*nav)
     
-    user_tracks[chat_id] = tracks
+    user_tracks[chat_id] = {'tracks': tracks, 'title': title}
     bot.send_message(chat_id, f"🎵 *{title}* (стр. {page+1}/{total_pages})", reply_markup=markup, parse_mode='Markdown')
 
 # ========== КОМАНДЫ ==========
@@ -295,6 +291,21 @@ def ref_cmd(message):
         return
     
     bot.send_message(message.chat.id, "🔗 *Реферальная панель*", reply_markup=ref_menu(), parse_mode='Markdown')
+
+# ========== НАВИГАЦИЯ ==========
+@bot.callback_query_handler(func=lambda call: call.data.startswith('page_'))
+def handle_page(call):
+    _, title, page = call.data.split('_')
+    page = int(page)
+    
+    data = user_tracks.get(call.message.chat.id)
+    if not data:
+        bot.answer_callback_query(call.id, "❌ Результаты поиска устарели")
+        return
+    
+    tracks = data['tracks']
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    show_tracks(call.message.chat.id, tracks, title, page)
 
 # ========== РЕФЕРАЛЬНЫЕ КНОПКИ ==========
 @bot.callback_query_handler(func=lambda call: call.data == "create_ref")
@@ -419,24 +430,16 @@ def help_cmd(message):
     
     bot.send_message(message.chat.id, help_text, reply_markup=main_menu(is_admin), parse_mode='Markdown')
 
-# ========== НАВИГАЦИЯ ==========
-@bot.callback_query_handler(func=lambda call: call.data.startswith('page_'))
-def handle_page(call):
-    page = int(call.data.split('_')[1])
-    tracks = user_tracks.get(call.message.chat.id, [])
-    if not tracks:
-        bot.answer_callback_query(call.id, "❌ Результаты поиска устарели")
-        return
-    
-    title = call.message.text.split('*')[1]
-    bot.delete_message(call.message.chat.id, call.message.message_id)
-    show_tracks(call.message.chat.id, tracks, title, page)
-
 # ========== СКАЧИВАНИЕ ==========
 @bot.callback_query_handler(func=lambda call: call.data.startswith('play_'))
 def play_track(call):
     idx = int(call.data.split('_')[1])
-    tracks = user_tracks.get(call.message.chat.id, [])
+    data = user_tracks.get(call.message.chat.id)
+    if not data:
+        bot.answer_callback_query(call.id, "❌ Результаты поиска устарели")
+        return
+    
+    tracks = data['tracks']
     if idx >= len(tracks):
         bot.answer_callback_query(call.id, "❌ Трек не найден")
         return
